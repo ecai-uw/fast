@@ -161,6 +161,7 @@ def main(cfg: OmegaConf):
 		deterministic_eval=cfg.deterministic_eval,
 	)
 
+	# breakpoint to see what the eval env is
 	logging_callback.evaluate(model, deterministic=False)
 	if cfg.deterministic_eval:
 		logging_callback.evaluate(model, deterministic=True)
@@ -173,6 +174,11 @@ def main(cfg: OmegaConf):
 		logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
 
 	callbacks = [checkpoint_callback, logging_callback]
+
+	# Do something like this:
+	# Assert that model class has a "base value" network, and a "train base value" method
+	# probably need a config to check if this value function has already been trained, or if we need to train it
+	# if we need to train it, run this method first, and then continue with model.learn()
 	# Train the agent
 	model.learn(
 		total_timesteps=20000000,

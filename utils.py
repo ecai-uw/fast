@@ -3,7 +3,7 @@ import wandb
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import hydra
-
+from tqdm import tqdm
 
 class DPPOBasePolicyWrapper:
 	def __init__(self, base_policy):
@@ -36,7 +36,7 @@ class LoggingCallback(BaseCallback):
 		eval_env=None, 
 		eval_freq=70, 
 		eval_episodes=2, 
-		verbose=0, 
+		verbose=1, 
 		rew_offset=0, 
 		num_train_env=1,
 		num_eval_env=1,
@@ -110,15 +110,21 @@ class LoggingCallback(BaseCallback):
 				self.evaluate(self.locals['self'], deterministic=True)
 		return True
 	
-	def evaluate(self, agent, deterministic=False):
+	def evaluate(self, agent, deterministic=False, evaluate_base=False, rollout_vid_index=0):
 		if self.eval_episodes > 0:
 			env = self.eval_env
+			rollout_vid = []
 			with torch.no_grad():
 				success, rews = [], []
 				rew_total, total_ep = 0, 0
 				rew_ep = np.zeros(self.num_eval_env)
 				for i in range(self.eval_episodes):
 					obs = env.reset()
+
+					# log rollout vid, if necessary
+					if i == 0:
+						rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
+
 					success_i = np.zeros(obs.shape[0])
 					r = []
 					for _ in range(self.max_steps):
@@ -126,6 +132,8 @@ class LoggingCallback(BaseCallback):
 							action, _ = agent.predict(obs, deterministic=deterministic)
 						elif self.algorithm == 'dsrl_na':
 							action, _ = agent.predict_diffused(obs, deterministic=deterministic)
+						elif self.algorithm == 'fast':
+							action, _ = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
 						next_obs, reward, done, info = env.step(action)
 						obs = next_obs
 						rew_ep += reward
@@ -134,6 +142,11 @@ class LoggingCallback(BaseCallback):
 						total_ep += np.sum(done)
 						success_i[reward > -self.rew_offset] = 1
 						r.append(reward)
+
+						# log rollout vid, if necessary
+						if i == 0:
+							rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
+
 					success.append(success_i.mean())
 					rews.append(np.mean(np.array(r)))
 					print(f'eval episode {i} at timestep {self.total_timesteps}')
@@ -142,8 +155,9 @@ class LoggingCallback(BaseCallback):
 					avg_rew = rew_total / total_ep
 				else:
 					avg_rew = 0
+				
 				if self.use_wandb:
-					name = 'eval'
+					name = 'eval_base' if evaluate_base else 'eval'
 					if deterministic:
 						wandb.log({
 							f"{name}/success_rate_deterministic": success_rate,
@@ -155,6 +169,11 @@ class LoggingCallback(BaseCallback):
 							f"{name}/reward": avg_rew,
 							f"{name}/timesteps": self.total_timesteps,
 						}, step=self.log_count)
+					# Log rollout video
+					rollout_vid = np.array(rollout_vid).transpose((0, 3, 1, 2))
+					wandb.log({
+						f"{name}/rollout_vid": wandb.Video(rollout_vid, fps=10, format="gif")
+					}, step=self.log_count)
 
 	def set_timesteps(self, timesteps):
 		self.total_timesteps = timesteps
@@ -163,7 +182,7 @@ class LoggingCallback(BaseCallback):
 
 def collect_rollouts(model, env, num_steps, base_policy, cfg):
 	obs = env.reset()
-	for i in range(num_steps):
+	for i in tqdm(range(num_steps)):
 		noise = torch.randn(cfg.env.n_envs, cfg.act_steps, cfg.action_dim).to(device=cfg.device)
 		if cfg.algorithm == 'dsrl_sac':
 			noise[noise < -cfg.train.action_magnitude] = -cfg.train.action_magnitude
@@ -174,9 +193,13 @@ def collect_rollouts(model, env, num_steps, base_policy, cfg):
 			action_store = action
 		elif cfg.algorithm == 'dsrl_sac':
 			action_store = noise.detach().cpu().numpy()
+		elif cfg.algorithm == 'fast':
+			action_store = action
 		action_store = action_store.reshape(-1, action_store.shape[1] * action_store.shape[2])
 		if cfg.algorithm == 'dsrl_sac':
 			action_store = model.policy.scale_action(action_store)
+		# if cfg.algorithm == 'fast':
+		# 	action_store = model.policy.scale_action(action_store)
 		model.replay_buffer.add(
 				obs=obs,
 				next_obs=next_obs,
@@ -190,14 +213,30 @@ def collect_rollouts(model, env, num_steps, base_policy, cfg):
 	
 
 
-def load_offline_data(model, offline_data_path, n_env):
+def load_offline_data(model, offline_data_path, n_env, chunk_size, reward_offset):
 	# this function should only be applied with dsrl_na
 	offline_data = np.load(offline_data_path)
-	obs = offline_data['states']
-	next_obs = offline_data['states_next']
-	actions = offline_data['actions']
-	rewards = offline_data['rewards']
-	terminals = offline_data['terminals']
+	# obs = offline_data['states']
+	# next_obs = offline_data['states_next']
+	# actions = offline_data['actions']
+	# rewards = offline_data['rewards']
+	# terminals = offline_data['terminals']
+	
+	# Check if data needs to be pre-processed or not.
+	if 'traj_lengths' in offline_data:
+		processed_data = preprocess_offline_data(offline_data, chunk_size, reward_offset)
+		obs = processed_data['states']
+		next_obs = processed_data['states_next']
+		actions = processed_data['actions']
+		rewards = processed_data['rewards']
+		terminals = processed_data['terminals']
+	else:
+		obs = offline_data['states']
+		next_obs = offline_data['states_next']
+		actions = offline_data['actions']
+		rewards = offline_data['rewards']
+		terminals = offline_data['terminals']
+
 	for i in range(int(obs.shape[0]/n_env)):
 		model.replay_buffer.add(
 					obs=obs[n_env*i:n_env*i+n_env],
@@ -208,3 +247,54 @@ def load_offline_data(model, offline_data_path, n_env):
 					infos=[{}] * n_env,
 				)
 	model.replay_buffer.final_offline_step()
+
+def preprocess_offline_data(offline_data, chunk_size, reward_offset):
+	"""
+	Converts from (states, actions, traj_lengths) to action-chunked
+	(states, states_next, actions, rewards, terminals).
+	"""
+	states = offline_data['states']
+	actions = offline_data['actions']
+	traj_lengths = offline_data['traj_lengths']
+
+	# Initializing arrays
+	processed_states = []
+	processed_states_next = []
+	processed_actions = []
+	processed_rewards = []
+	processed_terminals = []
+	
+	# TODO: Consider vectorizing this.
+	idx = 0
+	for length in traj_lengths:
+		for t in range(length - chunk_size + 1):
+			# Grabbing states.
+			processed_states.append(states[idx])
+			processed_states_next.append(states[idx + 1] if t < length - 1 else states[idx])
+			
+			# Grabbing actions.
+			end_idx = idx + chunk_size
+			processed_actions.append(actions[idx:end_idx].reshape(-1))
+
+			# Grabbing rewards.
+			processed_rewards.append(1.0 - reward_offset * chunk_size if t + chunk_size == length else -reward_offset * chunk_size)
+
+			# Grabbing terminals.
+			processed_terminals.append(t + chunk_size == length)
+			idx += 1
+		# Drop the last few samples that don't fit into a full chunk, and skip to next trajectory.
+		idx += (chunk_size - 1)
+
+	processed_actions = np.array(processed_actions)
+	processed_states = np.array(processed_states)
+	processed_states_next = np.array(processed_states_next)
+	processed_rewards = np.array(processed_rewards)
+	processed_terminals = np.array(processed_terminals, dtype=bool)
+
+	return {
+		'states': processed_states,
+		'states_next': processed_states_next,
+		'actions': processed_actions,
+		'rewards': processed_rewards,
+		'terminals': processed_terminals,
+	}

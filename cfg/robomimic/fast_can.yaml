@@ -19,20 +19,20 @@ use_wandb: True
 env_name: can
 log_dir: ./logs 
 obs_dim: 23
-action_dim: 7
+action_dim: 7 # this is base action dim!
 cond_steps: 1
 act_steps: 4 # action chunk size of base policy
 load_offline_data: False # if true, load offline demonstration data into replay buffer
 deterministic_eval: False # if true, run eval with both deterministic actions, as well as stochastic
 
-eval_interval: 3000
+eval_interval: 20 # 3000
 num_evals: 200
 save_model_interval: 10000
 save_replay_buffer: False
 
 env:
-  n_envs:  1 # 4
-  n_eval_envs: 1 # 25
+  n_envs:  4
+  n_eval_envs: 25
   name: ${env_name}
   max_episode_steps: 300
   reset_at_iteration: False
@@ -53,9 +53,13 @@ env:
       reset_within_step: True
 
 wandb:
-  project: dsrl
+  project: fast
   run: ${now:%H-%M-%S}_${name}
   group: robomimic-can
+
+policy:
+  type: residual # residual, affine, or non-linear
+  action_condition: False # Whether to condition policy on base action.
 
 train:
   tau: 0.005 # Target update rate
@@ -63,17 +67,31 @@ train:
   batch_size: 256
   train_freq: 1 # Update model after this many environment steps
   utd: 20 # Number of gradient steps to take per update
-  noise_critic_grad_steps: 10 # Number of gradient steps to take per update when fitting noise critic 
   use_layer_norm: True
   layer_size: 2048 # Layer size for actor and critic
   num_layers: 3 # Number of layers for actor and critic
-  discount: 0.99
+  discount: 0.95
   ent_coef: -1
   target_ent: 0.0
   init_rollout_steps: 1501 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
-  action_magnitude: 1.5 # Maximum action magnitude in noise action space
+  # action_magnitude: 1.5 # Maximum action magnitude in noise action space
   n_critics: 2 # Number of critic Q networks
   critic_backup_combine_type: min
+
+base:
+  tau: 0.005 # Target update rate
+  lr: 3e-4
+  fqe_steps: 100 # 2000
+  vd_steps: 100 # 2000
+  vd_samples: 16
+  # lr_scheduler: cosine # Options: constant, linear, cosine
+  batch_size: 256
+  use_layer_norm: ${train.use_layer_norm}
+  layer_size: ${train.layer_size}
+  num_layers: ${train.num_layers}
+  discount: 0.99
+  n_critics: ${train.n_critics}
+  critic_backup_combine_type: ${train.critic_backup_combine_type}
 
 model:
   _target_: model.diffusion.diffusion_eval.DiffusionEval

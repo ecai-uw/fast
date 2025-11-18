@@ -81,100 +81,53 @@ def main(cfg: OmegaConf):
         post_linear_modules=post_linear_modules,
         n_critics=cfg.train.n_critics,
     )
-    if cfg.algorithm == 'dsrl_sac':
-        model = SAC(
-            "MlpPolicy",
-            env,
-            learning_rate=cfg.train.actor_lr,
-            buffer_size=20000000,      # Replay buffer size
-            learning_starts=1,    # How many steps before learning starts (total steps for all env combined)
-            batch_size=cfg.train.batch_size,
-            tau=cfg.train.tau,                # Target network update rate
-            gamma=cfg.train.discount,               # Discount factor
-            train_freq=cfg.train.train_freq,             # Update the model every train_freq steps
-            gradient_steps=cfg.train.utd,         # How many gradient steps to do at each update
-            action_noise=None,        # No additional action noise
-            optimize_memory_usage=False,
-            ent_coef="auto" if cfg.train.ent_coef == -1 else cfg.train.ent_coef,          # Automatic entropy tuning
-            target_update_interval=1, # Update target network every interval
-            target_entropy="auto" if cfg.train.target_ent == -1 else cfg.train.target_ent,    # Automatic target entropy
-            use_sde=False,
-            sde_sample_freq=-1,
-            tensorboard_log=cfg.logdir,
-            verbose=1,
-            policy_kwargs=policy_kwargs,
-        )
-    elif cfg.algorithm == 'dsrl_na':
-        model = DSRL(
-            "MlpPolicy",
-            env,
-            learning_rate=cfg.train.actor_lr,
-            buffer_size=10000000,      # Replay buffer size
-            learning_starts=1,    # How many steps before learning starts (total steps for all env combined)
-            batch_size=cfg.train.batch_size,
-            tau=cfg.train.tau,                # Target network update rate
-            gamma=cfg.train.discount,               # Discount factor
-            train_freq=cfg.train.train_freq,             # Update the model every train_freq steps
-            gradient_steps=cfg.train.utd,         # How many gradient steps to do at each update
-            action_noise=None,        # No additional action noise
-            optimize_memory_usage=False,
-            ent_coef="auto" if cfg.train.ent_coef == -1 else cfg.train.ent_coef,          # Automatic entropy tuning
-            target_update_interval=1, # Update target network every interval
-            target_entropy="auto" if cfg.train.target_ent == -1 else cfg.train.target_ent,    # Automatic target entropy
-            use_sde=False,
-            sde_sample_freq=-1,
-            tensorboard_log=cfg.logdir,
-            verbose=1,
-            policy_kwargs=policy_kwargs,
-            diffusion_policy=base_policy,
-            diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
-            noise_critic_grad_steps=cfg.train.noise_critic_grad_steps,
-            critic_backup_combine_type=cfg.train.critic_backup_combine_type,
-        )
-    elif cfg.algorithm == 'fast':
-        # TODO: this code block is a little redundant with above, refactor later
-        base_post_linear_modules = None
-        if cfg.base.use_layer_norm:
-            base_post_linear_modules = [torch.nn.LayerNorm]
-        base_net_arch = []
-        for _ in range(cfg.base.num_layers):
-            base_net_arch.append(cfg.base.layer_size)
-        base_kwargs = dict(
-            net_arch=dict(pi=base_net_arch, qf=base_net_arch),
-            activation_fn=torch.nn.Tanh,
-            log_std_init=0.0,
-            post_linear_modules=base_post_linear_modules,
-            n_critics=cfg.base.n_critics,
-        )
-        model = FAST(
-            "MlpPolicy",
-            env,
-            base_kwargs,
-            learning_rate=cfg.train.actor_lr,
-            buffer_size=20000000,      # Replay buffer size
-            learning_starts=1,    # How many steps before learning starts (total steps for all env combined)
-            batch_size=cfg.train.batch_size,
-            tau=cfg.train.tau,                # Target network update rate
-            gamma=cfg.train.discount,               # Discount factor
-            train_freq=cfg.train.train_freq,             # Update the model every train_freq steps
-            gradient_steps=cfg.train.utd,         # How many gradient steps to do at each update
-            action_noise=None,        # No additional action noise
-            optimize_memory_usage=False,
-            ent_coef="auto" if cfg.train.ent_coef == -1 else cfg.train.ent_coef,          # Automatic entropy tuning
-            target_update_interval=1, # Update target network every interval
-            target_entropy="auto" if cfg.train.target_ent == -1 else cfg.train.target_ent,    # Automatic target entropy
-            use_sde=False,
-            sde_sample_freq=-1,
-            tensorboard_log=cfg.logdir,
-            verbose=1,
-            policy_kwargs=policy_kwargs,
-            diffusion_policy=base_policy,
-            diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
-            critic_backup_combine_type=cfg.train.critic_backup_combine_type,
-            base_gamma=cfg.base.discount,
-            policy_type=cfg.policy.type,
-            policy_action_condition=cfg.policy.action_condition,
-        )
+
+
+    assert cfg.algorithm == 'fast', "Only FAST algorithm is supported in this training script."
+    # TODO: this code block is a little redundant with above, refactor later
+    base_post_linear_modules = None
+    if cfg.base.use_layer_norm:
+        base_post_linear_modules = [torch.nn.LayerNorm]
+    base_net_arch = []
+    for _ in range(cfg.base.num_layers):
+        base_net_arch.append(cfg.base.layer_size)
+    base_kwargs = dict(
+        net_arch=dict(pi=base_net_arch, qf=base_net_arch),
+        activation_fn=torch.nn.Tanh,
+        log_std_init=0.0,
+        post_linear_modules=base_post_linear_modules,
+        n_critics=cfg.base.n_critics,
+    )
+    model = FAST(
+        "MlpPolicy",
+        env,
+        base_kwargs,
+        learning_rate=cfg.train.actor_lr,
+        buffer_size=20000000,      # Replay buffer size
+        learning_starts=1,    # How many steps before learning starts (total steps for all env combined)
+        batch_size=cfg.train.batch_size,
+        tau=cfg.train.tau,                # Target network update rate
+        gamma=cfg.train.discount,               # Discount factor
+        train_freq=cfg.train.train_freq,             # Update the model every train_freq steps
+        gradient_steps=cfg.train.utd,         # How many gradient steps to do at each update
+        action_noise=None,        # No additional action noise
+        optimize_memory_usage=False,
+        ent_coef="auto" if cfg.train.ent_coef == -1 else cfg.train.ent_coef,          # Automatic entropy tuning
+        target_update_interval=1, # Update target network every interval
+        target_entropy="auto" if cfg.train.target_ent == -1 else cfg.train.target_ent,    # Automatic target entropy
+        use_sde=False,
+        sde_sample_freq=-1,
+        tensorboard_log=cfg.logdir,
+        verbose=1,
+        policy_kwargs=policy_kwargs,
+        diffusion_policy=base_policy,
+        diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
+        critic_backup_combine_type=cfg.train.critic_backup_combine_type,
+        base_gamma=cfg.base.discount,
+        policy_type=cfg.policy.type,
+        policy_action_condition=cfg.policy.action_condition,
+        shape_rewards=cfg.policy.shape_rewards,
+    )
 
     checkpoint_callback = CheckpointCallback(
         save_freq=cfg.save_model_interval, 
@@ -212,26 +165,25 @@ def main(cfg: OmegaConf):
     if cfg.load_offline_data:
         load_offline_data(model, cfg.offline_data_path, num_env, cfg.act_steps, cfg.env.reward_offset)
     if cfg.train.init_rollout_steps > 0:
-        "Collecting initial rollouts..."
         collect_rollouts(model, env, cfg.train.init_rollout_steps, base_policy, cfg)	
         logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
     callbacks = [checkpoint_callback, logging_callback]
 
-    # Do something like this:
-    # Assert that model class has a "base value" network, and a "train base value" method
-    # probably need a config to check if this value function has already been trained, or if we need to train it
-    # if we need to train it, run this method first, and then continue with model.learn()
 
-    # run FQE
-    model.train_base_value(
-        fqe_steps=cfg.base.fqe_steps,
-        vd_steps=cfg.base.vd_steps,
-        batch_size=cfg.base.batch_size,
-        vd_samples=cfg.base.vd_samples,
-        # lr_scheduler=cfg.base.lr_scheduler,
-    )
+    # run value distillation
+    if model.shape_rewards:
+        # TODO: Add logic to save/load trained base value function
+        model.train_base_value(
+            fqe_steps=cfg.base.fqe_steps,
+            vd_steps=cfg.base.vd_steps,
+            batch_size=cfg.base.batch_size,
+            vd_samples=cfg.base.vd_samples,
+            # lr_scheduler=cfg.base.lr_scheduler,
+        )
+    else:
+        print("Skipping base value function training since reward shaping is not used.")
+    # TODO: Debugging step: evaluate base Q and V and demo trajectories, see if they make sense.
 
-    # Debugging step: evaluate base Q and V and demo trajectories, see if they make sense.
 
     # Train the agent
     model.learn(

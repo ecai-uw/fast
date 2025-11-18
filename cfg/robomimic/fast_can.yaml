@@ -60,6 +60,7 @@ wandb:
 policy:
   type: residual # residual, affine, or non-linear
   action_condition: False # Whether to condition policy on base action.
+  shape_rewards: False # Whether to use PBRS from base policy values.
 
 train:
   tau: 0.005 # Target update rate

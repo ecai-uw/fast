@@ -75,6 +75,7 @@ train:
   ent_coef: -1
   target_ent: 0.0
   init_rollout_steps: 1501 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
+  init_rollout_noise_magnitude: 0.1 # Initial noise magnitude for rollout actions
   # action_magnitude: 1.5 # Maximum action magnitude in noise action space
   n_critics: 2 # Number of critic Q networks
   critic_backup_combine_type: min

@@ -114,10 +114,15 @@ class LoggingCallback(BaseCallback):
 				self.evaluate(self.locals['self'], deterministic=True)
 		return True
 	
-	def evaluate(self, agent, deterministic=False, evaluate_base=False, rollout_vid_index=0):
+	def evaluate(self, agent, deterministic=False, evaluate_base=False):
 		if self.eval_episodes > 0:
 			env = self.eval_env
+
+			# Logging arrays
 			rollout_vid = []
+			obs_arr = []
+			action_arr = []
+
 			with torch.no_grad():
 				success, rews = [], []
 				rew_total, total_ep = 0, 0
@@ -125,9 +130,9 @@ class LoggingCallback(BaseCallback):
 				for i in range(self.eval_episodes):
 					obs = env.reset()
 
-					# log rollout vid, if necessary
-					if i == 0:
-						rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
+					# # log rollout vid, if necessary
+					# if i == 0:
+					# 	rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
 
 					success_i = np.zeros(obs.shape[0])
 					r = []
@@ -139,6 +144,13 @@ class LoggingCallback(BaseCallback):
 						elif self.algorithm == 'fast':
 							action, _ = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
 						next_obs, reward, done, info = env.step(action)
+
+						# Logging, if necessary
+						if i == 0:
+							obs_arr.append(obs[0])
+							action_arr.append(action[0])
+							rollout_vid.append(env.env_method('render')[0])
+						
 						obs = next_obs
 						rew_ep += reward
 						rew_total += sum(rew_ep[done])
@@ -147,9 +159,9 @@ class LoggingCallback(BaseCallback):
 						success_i[reward > -self.rew_offset * self.action_chunk] = 1
 						r.append(reward)
 
-						# log rollout vid, if necessary
-						if i == 0:
-							rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
+						# # log rollout vid, if necessary
+						# if i == 0:
+						# 	rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
 
 					success.append(success_i.mean())
 					rews.append(np.mean(np.array(r)))
@@ -159,6 +171,25 @@ class LoggingCallback(BaseCallback):
 					avg_rew = rew_total / total_ep
 				else:
 					avg_rew = 0
+
+				# Computing predicted Q and V-values for logged rollout.
+				rollout_vid = np.array(rollout_vid)
+				obs_arr = np.array(obs_arr)
+				action_arr = np.array(action_arr)
+				# NOTE: this will treat rollout length as batch size.
+				pred_mean_qs = torch.cat(
+					agent.base_critic(
+						torch.tensor(obs_arr, device=agent.device, dtype=torch.float32),
+						torch.tensor(action_arr, device=agent.device, dtype=torch.float32),
+					), dim=1
+				).mean(dim=1, keepdim=True).cpu().numpy()
+				pred_vs = agent.value_net(
+					torch.tensor(obs_arr, device=agent.device, dtype=torch.float32)
+				).cpu().numpy()
+				rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
+				combined_frames = plot_base_value(rollout_vid_frames, pred_mean_qs, pred_vs)
+				combined_frames = np.stack([np.asarray(f) for f in combined_frames], axis=0)
+				combined_frames = combined_frames.transpose(0, 3, 1, 2)
 				
 				if self.use_wandb:
 					name = 'eval_base' if evaluate_base else 'eval'
@@ -174,9 +205,9 @@ class LoggingCallback(BaseCallback):
 							f"{name}/timesteps": self.total_timesteps,
 						}, step=self.log_count)
 					# Log rollout video
-					rollout_vid = np.array(rollout_vid).transpose((0, 3, 1, 2))
+					# rollout_vid = np.array(rollout_vid).transpose((0, 3, 1, 2))
 					wandb.log({
-						f"{name}/rollout_vid": wandb.Video(rollout_vid, fps=10, format="gif")
+						f"{name}/rollout_vid": wandb.Video(combined_frames, fps=10, format="gif")
 					}, step=self.log_count)
 
 	def set_timesteps(self, timesteps):
@@ -365,12 +396,6 @@ def visualize_base_value(model, env, max_steps, cfg):
 
 		# Convert rollout vid to video.
 		rollout_vid_frames_i = [Image.fromarray(f) for f in rollout_vid_i]
-		# rollout_vid_frames_i[0].save(
-		# 	f"{log_dir}/rollout_{env_i}.gif",
-		# 	save_all=True,
-		# 	append_images=rollout_vid_frames_i[1:],
-		# 	loop=0,
-		# )
 
 		# Plot predicted Q vs V
 		plt.figure()
@@ -382,10 +407,16 @@ def visualize_base_value(model, env, max_steps, cfg):
 		plt.legend()
 		plt.savefig(f"{log_dir}/value_plot_{tag}.png")
 
-		plot_base_value(rollout_vid_frames_i, pred_mean_qs_i, pred_vs_i, log_dir, tag)
+		combined_frames = plot_base_value(rollout_vid_frames_i, pred_mean_qs_i, pred_vs_i, log_dir, tag)
+		combined_frames[0].save(
+			f"{log_dir}/rollout_{tag}.gif",
+			save_all=True,
+			append_images=combined_frames[1:],
+			loop=0,
+		)
 
 
-def plot_base_value(frames, qs, vs, log_dir, tag):
+def plot_base_value(frames, qs, vs):
 	num_frames = len(frames)
 	y_min = min(min(qs), min(vs))
 	y_max = max(max(qs), max(vs))
@@ -420,9 +451,4 @@ def plot_base_value(frames, qs, vs, log_dir, tag):
 		combined_img.paste(plt_img, (w, 0))
 		combined_frames.append(combined_img)
 
-	combined_frames[0].save(
-		f"{log_dir}/rollout_{tag}.gif",
-		save_all=True,
-		append_images=combined_frames[1:],
-		loop=0,
-	)
+	return combined_frames

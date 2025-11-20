@@ -128,7 +128,6 @@ def main(cfg: OmegaConf):
         policy_action_condition=cfg.policy.action_condition,
         shape_rewards=cfg.policy.shape_rewards,
     )
-    breakpoint()
     checkpoint_callback = CheckpointCallback(
         save_freq=cfg.save_model_interval, 
         save_path=cfg.logdir+'/checkpoint/',
@@ -160,7 +159,7 @@ def main(cfg: OmegaConf):
     if cfg.deterministic_eval:
         logging_callback.evaluate(model, deterministic=True)
     logging_callback.log_count += 1
-
+    quit()
     if cfg.load_offline_data:
         load_offline_data(model, cfg.offline_data_path, num_env, cfg.act_steps, cfg.env.reward_offset)
     if cfg.train.init_rollout_steps > 0:
@@ -181,8 +180,10 @@ def main(cfg: OmegaConf):
         )
     else:
         print("Skipping base value function training since reward shaping is not used.")
-    # TODO: Debugging step: evaluate base Q and V and demo trajectories, see if they make sense.
-    # visualize_base_value(model, eval_env, MAX_STEPS, cfg)
+    # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
+    visualize_base_value(model, eval_env, MAX_STEPS, cfg)
+
+    breakpoint()
 
     # Train the agent
     model.learn(

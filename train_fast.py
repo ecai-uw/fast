@@ -18,7 +18,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from env_utils import DiffusionPolicyEnvWrapper, ObservationWrapperRobomimic, ObservationWrapperGym, ActionChunkWrapper, make_robomimic_env
-from utils import load_base_policy, load_offline_data, collect_rollouts, LoggingCallback
+from utils import load_base_policy, load_offline_data, collect_rollouts, LoggingCallback, visualize_base_value
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 OmegaConf.register_new_resolver("round_up", math.ceil)
@@ -128,7 +128,7 @@ def main(cfg: OmegaConf):
         policy_action_condition=cfg.policy.action_condition,
         shape_rewards=cfg.policy.shape_rewards,
     )
-
+    breakpoint()
     checkpoint_callback = CheckpointCallback(
         save_freq=cfg.save_model_interval, 
         save_path=cfg.logdir+'/checkpoint/',
@@ -136,7 +136,6 @@ def main(cfg: OmegaConf):
         save_replay_buffer=cfg.save_replay_buffer, 
         save_vecnormalize=True,
     )
-
     num_env_eval = cfg.env.n_eval_envs
     eval_env = make_vec_env(make_env, n_envs=num_env_eval, vec_env_cls=SubprocVecEnv)
     if cfg.algorithm == 'dsrl_sac':
@@ -183,11 +182,11 @@ def main(cfg: OmegaConf):
     else:
         print("Skipping base value function training since reward shaping is not used.")
     # TODO: Debugging step: evaluate base Q and V and demo trajectories, see if they make sense.
-
+    # visualize_base_value(model, eval_env, MAX_STEPS, cfg)
 
     # Train the agent
     model.learn(
-        total_timesteps=2000, # 20000000,
+        total_timesteps=200000, # 20000000,
         callback = callbacks,
         progress_bar = True,
     )

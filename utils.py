@@ -4,6 +4,10 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import hydra
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+from PIL import Image
+import os
+import io
 
 class DPPOBasePolicyWrapper:
 	def __init__(self, base_policy):
@@ -72,7 +76,7 @@ class LoggingCallback(BaseCallback):
 				self.episode_lengths.append(info['episode']['l'])
 		rew = self.locals['rewards']
 		self.total_reward += np.mean(rew)
-		self.episode_success[rew > -self.rew_offset] = 1
+		self.episode_success[rew > -self.rew_offset * self.action_chunk] = 1
 		self.episode_completed[self.locals['dones']] = 1
 		self.total_timesteps += self.action_chunk * self.model.n_envs
 		if self.n_calls % self.log_freq == 0:
@@ -140,7 +144,7 @@ class LoggingCallback(BaseCallback):
 						rew_total += sum(rew_ep[done])
 						rew_ep[done] = 0 
 						total_ep += np.sum(done)
-						success_i[reward > -self.rew_offset] = 1
+						success_i[reward > -self.rew_offset * self.action_chunk] = 1
 						r.append(reward)
 
 						# log rollout vid, if necessary
@@ -211,8 +215,6 @@ def collect_rollouts(model, env, num_steps, base_policy, cfg):
 		obs = next_obs
 	model.replay_buffer.final_offline_step()
 	
-
-
 def load_offline_data(model, offline_data_path, n_env, chunk_size, reward_offset):
 	# this function should only be applied with dsrl_na
 	offline_data = np.load(offline_data_path)
@@ -277,7 +279,8 @@ def preprocess_offline_data(offline_data, chunk_size, reward_offset):
 			processed_actions.append(actions[idx:end_idx].reshape(-1))
 
 			# Grabbing rewards.
-			processed_rewards.append(1.0 - reward_offset * chunk_size if t + chunk_size == length else -reward_offset * chunk_size)
+			# processed_rewards.append(1.0 - reward_offset * chunk_size if t + chunk_size == length else -reward_offset * chunk_size)
+			processed_rewards.append(-reward_offset * chunk_size)
 
 			# Grabbing terminals.
 			processed_terminals.append(t + chunk_size == length)
@@ -298,3 +301,128 @@ def preprocess_offline_data(offline_data, chunk_size, reward_offset):
 		'rewards': processed_rewards,
 		'terminals': processed_terminals,
 	}
+
+
+def visualize_base_value(model, env, max_steps, cfg):
+	"""
+	For now, assume FAST environment and model.
+	"""
+	log_dir = f"/home/ecai/debug/" # offset={cfg.env.reward_offset}_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
+	log_dir += f"offset={cfg.env.reward_offset}"
+	log_dir += f"_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
+	log_dir += f"_init_steps={cfg.train.init_rollout_steps}"
+	os.makedirs(log_dir, exist_ok=True)
+
+	rollout_vid = []
+	obs_arr = []
+	action_arr = []
+	done_arr = []
+	success_arr = np.zeros(cfg.env.n_eval_envs)
+	chunk_size = model.diffusion_act_chunk
+
+	with torch.no_grad():
+		obs = env.reset()
+		for _ in tqdm(range(max_steps)):
+			action, _ = model.predict_diffused(obs, deterministic=True, sample_base=True)
+			next_obs, reward, done, info = env.step(action)
+
+			obs_arr.append(obs)
+			action_arr.append(action)
+			done_arr.append(done)
+			success_arr[reward > -cfg.env.reward_offset * chunk_size] = 1
+
+			obs = next_obs
+			rollout_vid.append(env.env_method('render'))
+
+	# Converting trajectory to arrays
+	rollout_vid = np.array(rollout_vid)
+	obs_arr = np.array(obs_arr)
+	action_arr = np.array(action_arr)
+
+	pred_mean_q_arr = []
+	pred_v_arr = []
+
+	with torch.no_grad():
+		for i in tqdm(range(max_steps)):
+			obs_i = torch.tensor(obs_arr[i], device=model.device)
+			action_i = torch.tensor(action_arr[i], device=model.device)
+			pred_mean_qs = torch.cat(model.base_critic(obs_i, action_i), dim=1).mean(dim=1, keepdim=True)
+			pred_vs = model.value_net(obs_i)
+			pred_mean_q_arr.append(pred_mean_qs.cpu().numpy())
+			pred_v_arr.append(pred_vs.cpu().numpy())
+
+	pred_mean_q_arr = np.array(pred_mean_q_arr)
+	pred_v_arr = np.array(pred_v_arr)
+
+	# Logging stuff.
+	num_envs = obs_arr.shape[1]
+	for env_i in tqdm(range(num_envs)):
+		rollout_vid_i = rollout_vid[:, env_i, ...]
+		pred_mean_qs_i = pred_mean_q_arr[:, env_i, 0]
+		pred_vs_i = pred_v_arr[:, env_i, 0]
+		success_tag = "success" if success_arr[env_i] == 1 else "fail"
+		tag = f"{env_i}_{success_tag}"
+
+		# Convert rollout vid to video.
+		rollout_vid_frames_i = [Image.fromarray(f) for f in rollout_vid_i]
+		# rollout_vid_frames_i[0].save(
+		# 	f"{log_dir}/rollout_{env_i}.gif",
+		# 	save_all=True,
+		# 	append_images=rollout_vid_frames_i[1:],
+		# 	loop=0,
+		# )
+
+		# Plot predicted Q vs V
+		plt.figure()
+		plt.plot(pred_mean_qs_i, label='Predicted Mean Q')
+		plt.plot(pred_vs_i, label='Predicted V')
+		plt.xlabel('Timestep')
+		plt.ylabel('Value')
+		plt.title('Base Value Function Predictions')
+		plt.legend()
+		plt.savefig(f"{log_dir}/value_plot_{tag}.png")
+
+		plot_base_value(rollout_vid_frames_i, pred_mean_qs_i, pred_vs_i, log_dir, tag)
+
+
+def plot_base_value(frames, qs, vs, log_dir, tag):
+	num_frames = len(frames)
+	y_min = min(min(qs), min(vs))
+	y_max = max(max(qs), max(vs))
+	h = frames[0].height
+	w = frames[0].width
+
+	buf = io.BytesIO()
+	combined_frames = []
+
+	for i, frame in enumerate(frames):
+		buf.truncate(0)
+		buf.seek(0)
+		plt.figure(figsize=(w / 100, h / 100), dpi=100)
+		plt.xlim(0, num_frames)
+		plt.ylim(y_min - 0.1, y_max + 0.1)
+		plt.plot(qs[:i+1], label='Predicted Mean Q')
+		plt.plot(vs[:i+1], label='Predicted V')
+		plt.xlabel('Timestep')
+		plt.ylabel('Value')
+		plt.title('Base Value Function Predictions')
+		plt.legend()
+
+		plt.savefig(buf, format='png')
+		plt.close()
+		buf.seek(0)
+
+		plt_img = Image.open(buf).copy().convert('RGB')
+
+		# Creating new Image, and pasting both frame and plot side by side.
+		combined_img = Image.new('RGB', (w * 2, h))
+		combined_img.paste(frame, (0, 0))
+		combined_img.paste(plt_img, (w, 0))
+		combined_frames.append(combined_img)
+
+	combined_frames[0].save(
+		f"{log_dir}/rollout_{tag}.gif",
+		save_all=True,
+		append_images=combined_frames[1:],
+		loop=0,
+	)

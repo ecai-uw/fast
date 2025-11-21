@@ -14,6 +14,8 @@ from PIL import Image
 import os
 import io
 
+# TODO: clean up.
+
 class DPPOBasePolicyWrapper:
 	def __init__(self, base_policy):
 		self.base_policy = base_policy
@@ -134,11 +136,6 @@ class LoggingCallback(BaseCallback):
 				rew_ep = np.zeros(self.num_eval_env)
 				for i in range(self.eval_episodes):
 					obs = env.reset()
-
-					# # log rollout vid, if necessary
-					# if i == 0:
-					# 	rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
-
 					success_i = np.zeros(obs.shape[0])
 					r = []
 					for _ in range(self.max_steps):
@@ -224,21 +221,24 @@ def collect_rollouts(model, env, num_steps, base_policy, cfg):
 	obs = env.reset()
 	for i in tqdm(range(num_steps)):
 		noise = torch.randn(cfg.env.n_envs, cfg.act_steps, cfg.action_dim).to(device=cfg.device)
-		if cfg.algorithm == 'dsrl_sac':
-			noise[noise < -cfg.train.action_magnitude] = -cfg.train.action_magnitude
-			noise[noise > cfg.train.action_magnitude] = cfg.train.action_magnitude
+		# if cfg.algorithm == 'dsrl_sac':
+		# 	noise[noise < -cfg.train.action_magnitude] = -cfg.train.action_magnitude
+		# 	noise[noise > cfg.train.action_magnitude] = cfg.train.action_magnitude
 		action = base_policy(torch.tensor(obs, device=cfg.device, dtype=torch.float32), noise)
+
+		# Add initial rollout noise for better coverage, if necessary.
+		if cfg.train.init_rollout_noise_magnitude > 0:
+			action += np.random.rand(*action.shape) * 2 * cfg.train.init_rollout_noise_magnitude - cfg.train.init_rollout_noise_magnitude
+
 		next_obs, reward, done, info = env.step(action)
-		if cfg.algorithm == 'dsrl_na':
-			action_store = action
-		elif cfg.algorithm == 'dsrl_sac':
-			action_store = noise.detach().cpu().numpy()
-		elif cfg.algorithm == 'fast':
+		# if cfg.algorithm == 'dsrl_na':
+		# 	action_store = action
+		# elif cfg.algorithm == 'dsrl_sac':
+		# 	action_store = noise.detach().cpu().numpy()
+		if cfg.algorithm == 'fast':
 			action_store = action
 		action_store = action_store.reshape(-1, action_store.shape[1] * action_store.shape[2])
-		if cfg.algorithm == 'dsrl_sac':
-			action_store = model.policy.scale_action(action_store)
-		# if cfg.algorithm == 'fast':
+		# if cfg.algorithm == 'dsrl_sac':
 		# 	action_store = model.policy.scale_action(action_store)
 		model.replay_buffer.add(
 				obs=obs,
@@ -343,7 +343,7 @@ def visualize_base_value(model, env, max_steps, cfg):
 	"""
 	For now, assume FAST environment and model.
 	"""
-	log_dir = f"/home/ecai/debug/" # offset={cfg.env.reward_offset}_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
+	log_dir = f"/home/ecai/debug/"
 	log_dir += f"offset={cfg.env.reward_offset}"
 	log_dir += f"_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
 	log_dir += f"_init_steps={cfg.train.init_rollout_steps}"
@@ -380,8 +380,8 @@ def visualize_base_value(model, env, max_steps, cfg):
 
 	with torch.no_grad():
 		for i in tqdm(range(max_steps)):
-			obs_i = torch.tensor(obs_arr[i], device=model.device)
-			action_i = torch.tensor(action_arr[i], device=model.device)
+			obs_i = torch.tensor(obs_arr[i], device=model.device, dtype=torch.float32)
+			action_i = torch.tensor(action_arr[i], device=model.device, dtype=torch.float32)
 			pred_mean_qs = torch.cat(model.base_critic(obs_i, action_i), dim=1).mean(dim=1, keepdim=True)
 			pred_vs = model.value_net(obs_i)
 			pred_mean_q_arr.append(pred_mean_qs.cpu().numpy())

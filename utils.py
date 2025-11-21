@@ -4,6 +4,11 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import hydra
 from tqdm import tqdm
+
+import matplotlib
+# Use 'Agg' backend for headless environments
+matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 from PIL import Image
 import os

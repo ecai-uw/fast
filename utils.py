@@ -180,12 +180,12 @@ class LoggingCallback(BaseCallback):
 				action_arr = np.array(action_arr)
 				# NOTE: this will treat rollout length as batch size.
 				pred_mean_qs = torch.cat(
-					agent.base_critic(
+					agent.base_critic_value.forward_q(
 						torch.tensor(obs_arr, device=agent.device, dtype=torch.float32),
 						torch.tensor(action_arr, device=agent.device, dtype=torch.float32),
 					), dim=1
 				).mean(dim=1, keepdim=True).cpu().numpy()
-				pred_vs = agent.value_net(
+				pred_vs = agent.base_criticvalue.forward_v(
 					torch.tensor(obs_arr, device=agent.device, dtype=torch.float32)
 				).cpu().numpy()
 				rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
@@ -217,7 +217,7 @@ class LoggingCallback(BaseCallback):
 
 
 
-def collect_rollouts(model, env, num_steps, base_policy, cfg):
+def collect_initial_rollouts(model, env, num_steps, base_policy, cfg):
 	obs = env.reset()
 	for i in tqdm(range(num_steps)):
 		noise = torch.randn(cfg.env.n_envs, cfg.act_steps, cfg.action_dim).to(device=cfg.device)
@@ -382,8 +382,8 @@ def visualize_base_value(model, env, max_steps, cfg):
 		for i in tqdm(range(max_steps)):
 			obs_i = torch.tensor(obs_arr[i], device=model.device, dtype=torch.float32)
 			action_i = torch.tensor(action_arr[i], device=model.device, dtype=torch.float32)
-			pred_mean_qs = torch.cat(model.base_critic(obs_i, action_i), dim=1).mean(dim=1, keepdim=True)
-			pred_vs = model.value_net(obs_i)
+			pred_mean_qs = torch.cat(model.base_critic_value.forward_q(obs_i, action_i), dim=1).mean(dim=1, keepdim=True)
+			pred_vs = model.base_critic_value.forward_v(obs_i)
 			pred_mean_q_arr.append(pred_mean_qs.cpu().numpy())
 			pred_v_arr.append(pred_vs.cpu().numpy())
 
@@ -412,7 +412,7 @@ def visualize_base_value(model, env, max_steps, cfg):
 		plt.legend()
 		plt.savefig(f"{log_dir}/value_plot_{tag}.png")
 
-		combined_frames = plot_base_value(rollout_vid_frames_i, pred_mean_qs_i, pred_vs_i, log_dir, tag)
+		combined_frames = plot_base_value(rollout_vid_frames_i, pred_mean_qs_i, pred_vs_i)
 		combined_frames[0].save(
 			f"{log_dir}/rollout_{tag}.gif",
 			save_all=True,
@@ -436,7 +436,8 @@ def plot_base_value(frames, qs, vs):
 		buf.seek(0)
 		plt.figure(figsize=(w / 100, h / 100), dpi=100)
 		plt.xlim(0, num_frames)
-		plt.ylim(y_min - 0.1, y_max + 0.1)
+		# plt.ylim(y_min - 0.1, y_max + 0.1)
+		plt.ylim(y_min - 0.1, max(max(qs[:i+1]), max(vs[:i+1])) + 0.1)
 		plt.plot(qs[:i+1], label='Predicted Mean Q')
 		plt.plot(vs[:i+1], label='Predicted V')
 		plt.xlabel('Timestep')

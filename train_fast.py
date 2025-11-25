@@ -18,7 +18,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from env_utils import DiffusionPolicyEnvWrapper, ObservationWrapperRobomimic, ObservationWrapperGym, ActionChunkWrapper, make_robomimic_env
-from utils import load_base_policy, load_offline_data, collect_rollouts, LoggingCallback, visualize_base_value
+from utils import load_base_policy, load_offline_data, collect_initial_rollouts, LoggingCallback, visualize_base_value
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 OmegaConf.register_new_resolver("round_up", math.ceil)
@@ -62,6 +62,9 @@ def main(cfg: OmegaConf):
         env = ActionChunkWrapper(env, cfg, max_episode_steps=cfg.env.max_episode_steps)
         return env
 
+    # env = make_env()
+    # breakpoint()
+
     base_policy = load_base_policy(cfg)
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)
     if cfg.algorithm == 'dsrl_sac':
@@ -84,7 +87,7 @@ def main(cfg: OmegaConf):
 
 
     assert cfg.algorithm == 'fast', "Only FAST algorithm is supported in this training script."
-    # TODO: this code block is a little redundant with above, refactor later
+    # TODO: clean up; this code block is a little redundant with above, refactor later
     base_post_linear_modules = None
     if cfg.base.use_layer_norm:
         base_post_linear_modules = [torch.nn.LayerNorm]
@@ -92,9 +95,8 @@ def main(cfg: OmegaConf):
     for _ in range(cfg.base.num_layers):
         base_net_arch.append(cfg.base.layer_size)
     base_kwargs = dict(
-        net_arch=dict(pi=base_net_arch, qf=base_net_arch),
+        net_arch=base_net_arch,
         activation_fn=torch.nn.Tanh,
-        log_std_init=0.0,
         post_linear_modules=base_post_linear_modules,
         n_critics=cfg.base.n_critics,
     )
@@ -127,6 +129,7 @@ def main(cfg: OmegaConf):
         policy_type=cfg.policy.type,
         policy_action_condition=cfg.policy.action_condition,
         shape_rewards=cfg.policy.shape_rewards,
+        cfg=cfg,
     )
     checkpoint_callback = CheckpointCallback(
         save_freq=cfg.save_model_interval, 
@@ -159,11 +162,11 @@ def main(cfg: OmegaConf):
     if cfg.deterministic_eval:
         logging_callback.evaluate(model, deterministic=True)
     logging_callback.log_count += 1
-    quit()
+
     if cfg.load_offline_data:
         load_offline_data(model, cfg.offline_data_path, num_env, cfg.act_steps, cfg.env.reward_offset)
     if cfg.train.init_rollout_steps > 0:
-        collect_rollouts(model, env, cfg.train.init_rollout_steps, base_policy, cfg)	
+        collect_initial_rollouts(model, env, cfg.train.init_rollout_steps, base_policy, cfg)	
         logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
     callbacks = [checkpoint_callback, logging_callback]
 
@@ -182,7 +185,6 @@ def main(cfg: OmegaConf):
         print("Skipping base value function training since reward shaping is not used.")
     # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
     visualize_base_value(model, eval_env, MAX_STEPS, cfg)
-
     breakpoint()
 
     # Train the agent

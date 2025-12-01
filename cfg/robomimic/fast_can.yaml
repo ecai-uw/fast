@@ -66,8 +66,8 @@ policy:
   type: residual # residual, affine, or non-linear
   action_condition: False # Whether to condition policy on base action.
   shape_rewards: False # Whether to use PBRS from base policy values.
-  residual_scale_schedule: 10000 # Schedule for clamping residual actions.
-  residual_scale: 0.3 # Max. magnitude to clamp residual predictions.
+  residual_scale_schedule: 50000 # Schedule for clamping residual actions.
+  residual_scale: 0.2 # Max. magnitude to clamp residual predictions.
   # residual_sample_schedule: ... # Frequency of sampling residual actions during training.
   drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
 

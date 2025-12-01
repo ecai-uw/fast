@@ -100,15 +100,15 @@ class LoggingCallback(BaseCallback):
 						"train/actor_loss": self.locals['self'].logger.name_to_value['train/actor_loss'],
 						"train/critic_loss": self.locals['self'].logger.name_to_value['train/critic_loss'],
 						"train/ent_coef_loss": self.locals['self'].logger.name_to_value['train/ent_coef_loss'],
-					}, step=self.log_count)
+					}, step=self.total_timesteps)
 					if np.sum(self.episode_completed) > 0:
 						wandb.log({
 							"train/success_rate": np.sum(self.episode_success) / np.sum(self.episode_completed),
-						}, step=self.log_count)
+						}, step=self.total_timesteps)
 					if self.algorithm == 'dsrl_na':
 						wandb.log({
 							"train/noise_critic_loss": self.locals['self'].logger.name_to_value['train/noise_critic_loss'],
-						}, step=self.log_count)
+						}, step=self.total_timesteps)
 				self.episode_rewards = []
 				self.episode_lengths = []
 				self.total_reward = 0
@@ -131,12 +131,17 @@ class LoggingCallback(BaseCallback):
 			action_arr = []
 
 			with torch.no_grad():
-				success, rews = [], []
-				rew_total, total_ep = 0, 0
+				# Initializing rollout metrics.
+				success, rews, times_to_goal = [], [], []
+				rew_total, shaped_rew_total, total_ep = 0, 0, 0
 				rew_ep = np.zeros(self.num_eval_env)
+				shaped_rew_ep = np.zeros(self.num_eval_env)
+
 				for i in range(self.eval_episodes):
 					obs = env.reset()
 					success_i = np.zeros(obs.shape[0])
+					time_to_goal_i = np.zeros(obs.shape[0])
+					obs_arr_i = []
 					r = []
 					for _ in range(self.max_steps):
 						if self.algorithm == 'dsrl_sac':
@@ -147,34 +152,64 @@ class LoggingCallback(BaseCallback):
 							action, _ = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
 						next_obs, reward, done, info = env.step(action)
 
+						obs_arr_i.append(obs)
 						# Logging, if necessary
 						if i == 0:
 							obs_arr.append(obs[0])
 							action_arr.append(action[0])
 							rollout_vid.append(env.env_method('render')[0])
 						
+						# Post-processing environment step.
 						obs = next_obs
 						rew_ep += reward
 						rew_total += sum(rew_ep[done])
 						rew_ep[done] = 0 
 						total_ep += np.sum(done)
-						success_i[reward > -self.rew_offset * self.action_chunk] = 1
+
+						# Updating success info.
+						is_success_i = reward > -self.rew_offset * self.action_chunk
+						time_to_goal_i[~is_success_i] += 1
+						success_i[is_success_i] = 1
 						r.append(reward)
 
-						# # log rollout vid, if necessary
-						# if i == 0:
-						# 	rollout_vid.append(env.env_method('render', indices=rollout_vid_index)[0])
+					# ------------------------- EPISODE POST-PROCESSING--------------------------
 
-					success.append(success_i.mean())
+					# Updating rollout metrics.
+					success.append(success_i)
+					times_to_goal.append(time_to_goal_i)
 					rews.append(np.mean(np.array(r)))
 					print(f'eval episode {i} at timestep {self.total_timesteps}')
+
+					# Computing shaped rewards with obs - next_obs pairs.
+					# TODO: WARNING: this is technically diffeent from how environment returns are aggregated.
+					# TODO: WARNING: if this discrepancy emerges later, need to also track 'dones' to ensure consistency.
+					obs_arr_i = np.array(obs_arr_i)
+					for o, o_next in zip(obs_arr_i[:-1], obs_arr_i[1:]):
+						shaped_reward = agent.get_shaped_rewards(
+							torch.tensor(o, device=agent.device, dtype=torch.float32),
+							torch.tensor(o_next, device=agent.device, dtype=torch.float32),
+						)
+						shaped_rew_ep += shaped_reward.cpu().numpy().reshape(-1)
+					shaped_rew_total += sum(shaped_rew_ep)				
+				
+				# ------------------------- MULTI-EPISODE EVALUATION POST-PROCESSING--------------------------
+
+				# Computing evaluation metrics.
+				success = np.array(success).flatten()
+				times_to_goal = np.array(times_to_goal).flatten()
 				success_rate = np.mean(success)
+				avg_time_to_goal = np.mean(times_to_goal)
+				avg_time_to_goal_success = np.mean(times_to_goal[success == 1]) if np.sum(success) > 0 else self.max_steps
+				throughput = success_rate / avg_time_to_goal if avg_time_to_goal > 0 else 0
+				
 				if total_ep > 0:
 					avg_rew = rew_total / total_ep
+					avg_shaped_rew = shaped_rew_total / total_ep
 				else:
 					avg_rew = 0
+					avg_shaped_rew = 0
 
-				# Computing predicted Q and V-values for logged rollout.
+				# Computing predicted Q and V values for logged rollout.
 				rollout_vid = np.array(rollout_vid)
 				obs_arr = np.array(obs_arr)
 				action_arr = np.array(action_arr)
@@ -185,7 +220,7 @@ class LoggingCallback(BaseCallback):
 						torch.tensor(action_arr, device=agent.device, dtype=torch.float32),
 					), dim=1
 				).mean(dim=1, keepdim=True).cpu().numpy()
-				pred_vs = agent.base_criticvalue.forward_v(
+				pred_vs = agent.base_critic_value.forward_v(
 					torch.tensor(obs_arr, device=agent.device, dtype=torch.float32)
 				).cpu().numpy()
 				rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
@@ -193,24 +228,33 @@ class LoggingCallback(BaseCallback):
 				combined_frames = np.stack([np.asarray(f) for f in combined_frames], axis=0)
 				combined_frames = combined_frames.transpose(0, 3, 1, 2)
 				
+				# -------------------------- WANDB LOGGING --------------------------
 				if self.use_wandb:
 					name = 'eval_base' if evaluate_base else 'eval'
 					if deterministic:
 						wandb.log({
 							f"{name}/success_rate_deterministic": success_rate,
 							f"{name}/reward_deterministic": avg_rew,
-						}, step=self.log_count)
+						}, step=self.total_timesteps)
 					else:
 						wandb.log({
 							f"{name}/success_rate": success_rate,
 							f"{name}/reward": avg_rew,
 							f"{name}/timesteps": self.total_timesteps,
-						}, step=self.log_count)
-					# Log rollout video
-					# rollout_vid = np.array(rollout_vid).transpose((0, 3, 1, 2))
+						}, step=self.total_timesteps)
+					
+					# Log additional throughput metrics.
+					wandb.log({
+						f"{name/shaped_reward}": avg_shaped_rew,
+						f"{name}/avg_time_to_goal": avg_time_to_goal,
+						f"{name}/avg_time_to_goal_success": avg_time_to_goal_success,
+						f"{name}/throughput": throughput,
+					}, step=self.total_timesteps)
+
+					# Log rollout video.
 					wandb.log({
 						f"{name}/rollout_vid": wandb.Video(combined_frames, fps=10, format="gif")
-					}, step=self.log_count)
+					}, step=self.total_timesteps)
 
 	def set_timesteps(self, timesteps):
 		self.total_timesteps = timesteps

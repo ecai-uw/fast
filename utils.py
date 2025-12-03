@@ -245,7 +245,7 @@ class LoggingCallback(BaseCallback):
 					
 					# Log additional throughput metrics.
 					wandb.log({
-						f"{name/shaped_reward}": avg_shaped_rew,
+						f"{name}/shaped_reward": avg_shaped_rew,
 						f"{name}/avg_time_to_goal": avg_time_to_goal,
 						f"{name}/avg_time_to_goal_success": avg_time_to_goal_success,
 						f"{name}/throughput": throughput,

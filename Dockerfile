@@ -66,7 +66,8 @@ WORKDIR $CODING_ROOT/code/fast
 COPY ./cfg $CODING_ROOT/code/fast/cfg
 COPY ./dppo $CODING_ROOT/code/fast/dppo
 COPY ./stable-baselines3 $CODING_ROOT/code/fast/stable-baselines3
-# TODO: eventually abstract these scripts into a project hierarchy.
+# TODO: eventually abstract these scripts into a project hierarchy. Don't need to copy scripts, since
+# they are mounted later.
 COPY ./env_utils.py $CODING_ROOT/code/fast/env_utils.py
 COPY ./train_fast.py $CODING_ROOT/code/fast/train_fast.py
 COPY ./utils.py $CODING_ROOT/code/fast/utils.py

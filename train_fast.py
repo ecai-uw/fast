@@ -172,24 +172,21 @@ def main(cfg: OmegaConf):
 
 
     # run value distillation
-    if model.shape_rewards:
-        # TODO: Add logic to save/load trained base value function
-        model.train_base_value(
-            fqe_steps=cfg.base.fqe_steps,
-            vd_steps=cfg.base.vd_steps,
-            batch_size=cfg.base.batch_size,
-            vd_samples=cfg.base.vd_samples,
-            # lr_scheduler=cfg.base.lr_scheduler,
-        )
-    else:
-        print("Skipping base value function training since reward shaping is not used.")
+    # TODO: Add logic to save/load trained base value function
+    model.train_base_value(
+        fqe_steps=cfg.base.fqe_steps,
+        vd_steps=cfg.base.vd_steps,
+        batch_size=cfg.base.batch_size,
+        vd_samples=cfg.base.vd_samples,
+        # lr_scheduler=cfg.base.lr_scheduler,
+    )
     # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
-    visualize_base_value(model, eval_env, MAX_STEPS, cfg)
-    breakpoint()
+    # visualize_base_value(model, eval_env, MAX_STEPS, cfg)
+    # breakpoint()
 
     # Train the agent
     model.learn(
-        total_timesteps=200000, # 20000000,
+        total_timesteps = cfg.total_timesteps, # 20000000,
         callback = callbacks,
         progress_bar = True,
     )

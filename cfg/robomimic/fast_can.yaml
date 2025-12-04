@@ -25,6 +25,7 @@ act_steps: 4 # action chunk size of base policy
 load_offline_data: False # if true, load offline demonstration data into replay buffer
 deterministic_eval: False # if true, run eval with both deterministic actions, as well as stochastic
 
+total_timesteps: 200000
 eval_interval: 300
 num_evals: 200
 save_model_interval: 10000
@@ -38,7 +39,7 @@ env:
   reset_at_iteration: False
   save_video: False
   best_reward_threshold_for_success: 1 
-  reward_offset: 1
+  reward_offset: 0
   wrappers:
     robomimic_lowdim:
       normalization_path: ${normalization_path}

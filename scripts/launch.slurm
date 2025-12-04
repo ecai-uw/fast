@@ -12,7 +12,8 @@
 # Grabbing arguments.
 CONTAINER_PATH=/gscratch/weirdlab/ecai0608/fast_project/fast.sif
 WANDB_MODE=$1
-COMMAND=$2
+shift
+COMMAND=$@
 
-# Run the training script. NOTE: this should be run from the root directory.
+# Run the training script. NOTE: this should be run from the project root.
 ./scripts/run.sh $CONTAINER_PATH $WANDB_MODE $COMMAND

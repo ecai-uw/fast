@@ -3,9 +3,14 @@
 # General usage:
 # bash scripts/run.sh [CONTAINER_PATH] [WANDB_MODE] [ARGS]
 
+# TODO: more args to add in the future: task type (this will determine configs)
+# method type
+
 CONTAINER_PATH=$1
 WANDB_MODE=$2
-COMMAND=$3
+shift
+shift
+COMMAND=$@
 
 apptainer exec --nv --writable-tmpfs \
     --containall --no-home \

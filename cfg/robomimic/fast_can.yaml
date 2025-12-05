@@ -22,7 +22,7 @@ obs_dim: 23
 action_dim: 7 # this is base action dim!
 cond_steps: 1
 act_steps: 4 # action chunk size of base policy
-load_offline_data: False # if true, load offline demonstration data into replay buffer
+load_offline_data: True # if true, load offline demonstration data into replay buffer
 deterministic_eval: False # if true, run eval with both deterministic actions, as well as stochastic
 
 total_timesteps: 200000
@@ -64,8 +64,8 @@ wandb:
   group: robomimic-can
 
 policy:
-  type: residual # residual, affine, or non-linear
-  action_condition: False # Whether to condition policy on base action.
+  type: residual # residual, residual_scale
+  action_condition: True # Whether to condition policy on base action.
   shape_rewards: False # Whether to use PBRS from base policy values.
   residual_scale_schedule: 50000 # Schedule for clamping residual actions.
   residual_scale: 0.2 # Max. magnitude to clamp residual predictions.

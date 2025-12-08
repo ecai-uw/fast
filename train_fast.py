@@ -5,6 +5,7 @@ import math
 import torch
 import random
 import wandb
+import uuid
 import numpy as np
 import hydra
 from omegaconf import OmegaConf
@@ -39,15 +40,38 @@ def main(cfg: OmegaConf):
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
 
-    if cfg.use_wandb:
-        wandb.init(
-            project=cfg.wandb.project,
-            name=cfg.name,
-            group=cfg.wandb.group,
-            monitor_gym=True,
-            save_code=True,
-            config=OmegaConf.to_container(cfg, resolve=True),
-        )
+    assert cfg.use_wandb, "WandB logging must be enabled."
+    # If resuming from a previous run...
+    if cfg.resume:
+        # ...run id must already be specified.
+        assert cfg.wandb.id is not None, "Must provide wandb run id to resume from."
+        # Manually set run_dir to match previous run.
+        cfg.run_dir = os.path.join(cfg.log_dir, cfg.wandb.id)
+        # Initialize wandb in resume mode.
+        resume_mode="must"
+    # Otherwise, train from scratch.
+    else:
+        # Manually generating run id to handle customized directory structure.
+        run_id = uuid.uuid4().hex[:8]
+        cfg.wandb.id = run_id
+        # Creating persistent run directory for checkpoints, etc.
+        cfg.run_dir = os.path.join(cfg.log_dir, cfg.wandb.id)
+        os.makedirs(cfg.run_dir, exist_ok=False)
+        # Ensure that wandb initializes a new run.
+        resume_mode="never"
+
+    # Initializing wandb run.
+    wandb.init(
+        id=cfg.wandb.id,
+        dir=cfg.run_dir,
+        project=cfg.wandb.project,
+        name=cfg.wandb.name,
+        group=cfg.wandb.group,
+        monitor_gym=True,
+        save_code=True,
+        config=OmegaConf.to_container(cfg, resolve=True),
+        resume=resume_mode,
+    )
 
     MAX_STEPS = int(cfg.env.max_episode_steps / cfg.act_steps)
 
@@ -119,21 +143,21 @@ def main(cfg: OmegaConf):
         target_entropy="auto" if cfg.train.target_ent == -1 else cfg.train.target_ent,    # Automatic target entropy
         use_sde=False,
         sde_sample_freq=-1,
-        tensorboard_log=cfg.logdir,
+        # tensorboard_log=cfg.logdir,
+        tensorboard_log=None, # Disabling tensorboard logging, since we use WandB.
         verbose=1,
         policy_kwargs=policy_kwargs,
         diffusion_policy=base_policy,
         diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
         critic_backup_combine_type=cfg.train.critic_backup_combine_type,
         base_gamma=cfg.base.discount,
-        policy_type=cfg.policy.type,
         policy_action_condition=cfg.policy.action_condition,
         shape_rewards=cfg.policy.shape_rewards,
         cfg=cfg,
     )
     checkpoint_callback = CheckpointCallback(
         save_freq=cfg.save_model_interval, 
-        save_path=cfg.logdir+'/checkpoint/',
+        save_path=cfg.run_dir+'/checkpoint/',
         name_prefix='ft_policy',
         save_replay_buffer=cfg.save_replay_buffer, 
         save_vecnormalize=True,
@@ -149,7 +173,7 @@ def main(cfg: OmegaConf):
         eval_episodes = int(cfg.num_evals / num_env_eval), 
         log_freq=MAX_STEPS, 
         use_wandb=cfg.use_wandb, 
-        eval_env=eval_env, 
+        eval_env=eval_env,
         eval_freq=cfg.eval_interval,
         num_train_env=num_env,
         num_eval_env=num_env_eval,
@@ -170,7 +194,6 @@ def main(cfg: OmegaConf):
         logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
     callbacks = [checkpoint_callback, logging_callback]
 
-
     # run value distillation
     # TODO: Add logic to save/load trained base value function
     model.train_base_value(
@@ -182,18 +205,19 @@ def main(cfg: OmegaConf):
     )
     # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
     # visualize_base_value(model, eval_env, MAX_STEPS, cfg)
+    # quit()
     # breakpoint()
 
     # Train the agent
     model.learn(
         total_timesteps = cfg.total_timesteps, # 20000000,
         callback = callbacks,
-        progress_bar = True,
+        progress_bar = False,
     )
 
     # Save the final model
     if len(cfg.name) > 0:
-        model.save(cfg.logdir+"/checkpoint/final")
+        model.save(cfg.run_dir+"/checkpoint/final")
 
     # Close environment and wandb
     env.close()

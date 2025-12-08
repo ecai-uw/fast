@@ -2,20 +2,29 @@ defaults:
   - _self_
 hydra:
   run:  
-    dir: ${logdir}
+    dir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 
 name: robomimic_can_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
-logdir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+# NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
+run_dir: null # This will be manually set during training to allow for simple run resumes.
 base_policy_path: ./dppo/log/robomimic-pretrain/can/can_pre_diffusion_mlp_ta4_td20/2024-06-28_13-29-54/checkpoint/state_5000.pt
 offline_data_path: ./dppo/data/robomimic/can/train.npz
 dppo_path: ./dppo
 normalization_path: ./dppo/log/robomimic/${env_name}/normalization.npz
 
+use_wandb: True # Kind of legacy parameter, eventually just remove this and always use wandb.
+resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
+wandb:
+  project: fast
+  # run: ${now:%H-%M-%S}_${name}
+  name: ${name}
+  group: robomimic-can
+  id: null # if resume is true, this must be provided.
+
 algorithm: fast # options are: dsrl_na, dsrl_sac
 
 seed: 1
 device: cuda:0
-use_wandb: True
 env_name: can
 log_dir: ./logs 
 obs_dim: 23
@@ -29,7 +38,7 @@ total_timesteps: 200000
 eval_interval: 300
 num_evals: 200
 save_model_interval: 10000
-save_replay_buffer: False
+save_replay_buffer: True
 
 env:
   n_envs:  4
@@ -58,17 +67,12 @@ env:
     robot0_gripper_qpos: 2
     object: 14
 
-wandb:
-  project: fast
-  run: ${now:%H-%M-%S}_${name}
-  group: robomimic-can
-
 policy:
   type: residual # residual, residual_scale
   action_condition: True # Whether to condition policy on base action.
   shape_rewards: False # Whether to use PBRS from base policy values.
-  residual_scale_schedule: 50000 # Schedule for clamping residual actions.
-  residual_scale: 0.2 # Max. magnitude to clamp residual predictions.
+  residual_mag_schedule: 50000 # Schedule for clamping residual actions.
+  residual_mag: 0.2 # Max. magnitude to clamp residual predictions.
   # residual_sample_schedule: ... # Frequency of sampling residual actions during training.
   drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
 

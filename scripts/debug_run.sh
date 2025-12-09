@@ -6,16 +6,18 @@
 # TODO: more args to add in the future: task type (this will determine configs)
 # method type
 
-METHOD=$1
 CONTAINER_PATH=~/containers/fast.sif
+WANDB_MODE=disabled
+
+METHOD=$1
 shift
 COMMAND=$@
 
 
 if [ "$METHOD" == "local" ]; then
 
-    WANDB_MODE=disabled python train_fast.py \
-        num_evals=2 env.n_envs=1 env.n_eval_envs=1 \
+    WANDB_MODE=$WANDB_MODE python train_fast.py \
+        num_evals=5 env.n_envs=1 env.n_eval_envs=5 \
         train.init_rollout_steps=20 \
         base.fqe_steps=50 base.vd_steps=50 \
         total_timesteps=10 \
@@ -27,7 +29,7 @@ elif [ "$METHOD" == "local-container" ]; then
         --containall --no-home \
         --home /root \
         --bind $(pwd):/opt/code/fast/ \
-        --env WANDB_MODE=disabled \
+        --env WANDB_MODE=$WANDB_MODE \
         --env WANDB_API_KEY=$WANDB_API_KEY \
         --pwd /opt/code/fast/ \
         $CONTAINER_PATH \

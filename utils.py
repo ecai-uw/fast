@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import os
 import io
+import warnings
 
 # TODO: clean up.
 
@@ -100,21 +101,23 @@ class LoggingCallback(BaseCallback):
 						"train/actor_loss": self.locals['self'].logger.name_to_value['train/actor_loss'],
 						"train/critic_loss": self.locals['self'].logger.name_to_value['train/critic_loss'],
 						"train/ent_coef_loss": self.locals['self'].logger.name_to_value['train/ent_coef_loss'],
-					}, step=self.total_timesteps)
+					}, step=self.num_timesteps)
 					if np.sum(self.episode_completed) > 0:
 						wandb.log({
 							"train/success_rate": np.sum(self.episode_success) / np.sum(self.episode_completed),
-						}, step=self.total_timesteps)
+						}, step=self.num_timesteps)
 					if self.algorithm == 'dsrl_na':
 						wandb.log({
 							"train/noise_critic_loss": self.locals['self'].logger.name_to_value['train/noise_critic_loss'],
-						}, step=self.total_timesteps)
+						}, step=self.num_timesteps)
 				self.episode_rewards = []
 				self.episode_lengths = []
 				self.total_reward = 0
 				self.episode_success = np.zeros(self.num_train_env)
 				self.episode_completed = np.zeros(self.num_train_env)
 
+		# NOTE: this might behave weirdly with checkpoint resuming if save_freq for checkpoint...
+		# ...is not divisible by eval_freq.
 		if self.n_calls % self.eval_freq == 0:
 			self.evaluate(self.locals['self'], deterministic=False)
 			if self.deterministic_eval:
@@ -235,13 +238,13 @@ class LoggingCallback(BaseCallback):
 						wandb.log({
 							f"{name}/success_rate_deterministic": success_rate,
 							f"{name}/reward_deterministic": avg_rew,
-						}, step=self.total_timesteps)
+						}, step=self.num_timesteps)
 					else:
 						wandb.log({
 							f"{name}/success_rate": success_rate,
 							f"{name}/reward": avg_rew,
 							f"{name}/timesteps": self.total_timesteps,
-						}, step=self.total_timesteps)
+						}, step=self.num_timesteps)
 					
 					# Log additional throughput metrics.
 					wandb.log({
@@ -249,12 +252,15 @@ class LoggingCallback(BaseCallback):
 						f"{name}/avg_time_to_goal": avg_time_to_goal,
 						f"{name}/avg_time_to_goal_success": avg_time_to_goal_success,
 						f"{name}/throughput": throughput,
-					}, step=self.total_timesteps)
+					}, step=self.num_timesteps)
 
 					# Log rollout video.
-					wandb.log({
-						f"{name}/rollout_vid": wandb.Video(combined_frames, fps=10, format="gif")
-					}, step=self.total_timesteps)
+					with warnings.catch_warnings():
+						# NOTE: Suppressing warnings due to inconsistency between WandB and PIL.
+						warnings.simplefilter("ignore")
+						wandb.log({
+							f"{name}/rollout_vid": wandb.Video(combined_frames, fps=10, format="gif")
+						}, step=self.num_timesteps)
 
 	def set_timesteps(self, timesteps):
 		self.total_timesteps = timesteps
@@ -387,7 +393,7 @@ def visualize_base_value(model, env, max_steps, cfg):
 	"""
 	For now, assume FAST environment and model.
 	"""
-	log_dir = f"/home/ecai/debug/"
+	log_dir = f"/home/ecai/debug/fast2"
 	log_dir += f"offset={cfg.env.reward_offset}"
 	log_dir += f"_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
 	log_dir += f"_init_steps={cfg.train.init_rollout_steps}"

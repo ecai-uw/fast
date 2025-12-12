@@ -37,6 +37,7 @@ apptainer exec --nv --writable-tmpfs \
 # --home /root:
 #       sets the container home directory to /root (instead of host $HOME).
 #
+# TODO: this can be modified so that the script can be run anywhere.
 # --bind $(pwd):/opt/code/fast:
 #       requires that current working directory be the project root.
 

@@ -17,9 +17,10 @@ resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
 wandb:
   project: fast
   # run: ${now:%H-%M-%S}_${name}
-  name: ${name}
+  # name: ${name}
   group: robomimic-can
   id: null # if resume is true, this must be provided.
+  save_id_local_path: null # relative path to log_dir to save wandb run id - helpful for slurm pre-emption.
 
 algorithm: fast # options are: dsrl_na, dsrl_sac
 
@@ -35,7 +36,7 @@ load_offline_data: True # if true, load offline demonstration data into replay b
 deterministic_eval: False # if true, run eval with both deterministic actions, as well as stochastic
 
 total_timesteps: 200000
-eval_interval: 300
+eval_interval: 500
 num_evals: 200
 save_model_interval: 10000
 save_replay_buffer: True
@@ -68,7 +69,7 @@ env:
     object: 14
 
 policy:
-  type: residual # residual, residual_scale
+  type: residual # residual, residual_scale, residual_force
   action_condition: True # Whether to condition policy on base action.
   shape_rewards: False # Whether to use PBRS from base policy values.
   residual_mag_schedule: 50000 # Schedule for clamping residual actions.

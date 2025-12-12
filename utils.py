@@ -139,6 +139,7 @@ class LoggingCallback(BaseCallback):
 				rew_total, shaped_rew_total, total_ep = 0, 0, 0
 				rew_ep = np.zeros(self.num_eval_env)
 				shaped_rew_ep = np.zeros(self.num_eval_env)
+				delta_action_norms = []
 
 				for i in range(self.eval_episodes):
 					obs = env.reset()
@@ -146,6 +147,7 @@ class LoggingCallback(BaseCallback):
 					time_to_goal_i = np.zeros(obs.shape[0])
 					obs_arr_i = []
 					r = []
+					delta_action_norms_i = []
 					for _ in range(self.max_steps):
 						if self.algorithm == 'dsrl_sac':
 							action, _ = agent.predict(obs, deterministic=deterministic)
@@ -168,6 +170,7 @@ class LoggingCallback(BaseCallback):
 						rew_total += sum(rew_ep[done])
 						rew_ep[done] = 0 
 						total_ep += np.sum(done)
+						delta_action_norms_i.append(np.linalg.norm(action, axis=-1))
 
 						# Updating success info.
 						is_success_i = reward > -self.rew_offset * self.action_chunk
@@ -181,6 +184,7 @@ class LoggingCallback(BaseCallback):
 					success.append(success_i)
 					times_to_goal.append(time_to_goal_i)
 					rews.append(np.mean(np.array(r)))
+					delta_action_norms.append(np.array(delta_action_norms_i).mean())
 					print(f'eval episode {i} at timestep {self.total_timesteps}')
 
 					# Computing shaped rewards with obs - next_obs pairs.
@@ -204,7 +208,8 @@ class LoggingCallback(BaseCallback):
 				avg_time_to_goal = np.mean(times_to_goal)
 				avg_time_to_goal_success = np.mean(times_to_goal[success == 1]) if np.sum(success) > 0 else self.max_steps
 				throughput = success_rate / avg_time_to_goal if avg_time_to_goal > 0 else 0
-				
+				delta_action_norms = np.array(delta_action_norms).mean()
+
 				if total_ep > 0:
 					avg_rew = rew_total / total_ep
 					avg_shaped_rew = shaped_rew_total / total_ep
@@ -252,6 +257,7 @@ class LoggingCallback(BaseCallback):
 						f"{name}/avg_time_to_goal": avg_time_to_goal,
 						f"{name}/avg_time_to_goal_success": avg_time_to_goal_success,
 						f"{name}/throughput": throughput,
+						f"{name}/delta_action_norm": delta_action_norms,
 					}, step=self.num_timesteps)
 
 					# Log rollout video.
@@ -393,10 +399,11 @@ def visualize_base_value(model, env, max_steps, cfg):
 	"""
 	For now, assume FAST environment and model.
 	"""
-	log_dir = f"/home/ecai/debug/fast2"
-	log_dir += f"offset={cfg.env.reward_offset}"
-	log_dir += f"_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
-	log_dir += f"_init_steps={cfg.train.init_rollout_steps}"
+	log_dir = f"/home/ecai/debug/fast"
+	log_dir += f"/scale={scale}"
+	# log_dir += f"offset={cfg.env.reward_offset}"
+	# log_dir += f"_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
+	# log_dir += f"_init_steps={cfg.train.init_rollout_steps}"
 	os.makedirs(log_dir, exist_ok=True)
 
 	rollout_vid = []

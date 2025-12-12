@@ -44,6 +44,7 @@ def main(cfg: OmegaConf):
     assert cfg.use_wandb, "WandB logging must be enabled."
     # If resuming from a previous run...
     if cfg.resume:
+        # TODO: ADD SOME LOGGING HERE TO INDICATE RESUMING TRAINING, AND WHICH CHECKPOINT.
         # ...run id must already be specified.
         assert cfg.wandb.id is not None, "Must provide wandb run id to resume from."
         # Manually set run_dir to match previous run.
@@ -85,13 +86,17 @@ def main(cfg: OmegaConf):
         id=cfg.wandb.id,
         dir=cfg.run_dir,
         project=cfg.wandb.project,
-        name=cfg.wandb.name,
+        name=cfg.wandb.id,
         group=cfg.wandb.group,
         monitor_gym=True,
         save_code=True,
         config=OmegaConf.to_container(cfg, resolve=True),
         **resume_kwargs,
     )
+    # If specified, save wandb run id to local path for future resuming (e.g., in slurm jobs).
+    if cfg.wandb.save_id_local_path is not None:
+        with open(os.path.join(cfg.log_dir, cfg.wandb.save_id_local_path), 'w') as f:
+            f.write(cfg.wandb.id)
 
     MAX_STEPS = int(cfg.env.max_episode_steps / cfg.act_steps)
 
@@ -189,7 +194,7 @@ def main(cfg: OmegaConf):
     # NOTE: save_freq is based on self.n_calls, not self.num_timesteps, but the path is saved to num_timesteps...
     # NOTE: ...this could lead to unexpected behavior, but should be fine for now.
     checkpoint_callback = CheckpointCallback(
-        save_freq=cfg.save_model_interval, 
+        save_freq=cfg.save_model_interval // cfg.env.n_envs,  # Convert from timesteps to calls.
         save_path=cfg.run_dir+'/checkpoint/',
         name_prefix='ft_policy',
         save_replay_buffer=cfg.save_replay_buffer, 
@@ -207,7 +212,7 @@ def main(cfg: OmegaConf):
         log_freq=MAX_STEPS, 
         use_wandb=cfg.use_wandb, 
         eval_env=eval_env,
-        eval_freq=cfg.eval_interval,
+        eval_freq=cfg.eval_interval // cfg.env.n_envs, # Convert from timesteps to calls.
         num_train_env=num_env,
         num_eval_env=num_env_eval,
         rew_offset=cfg.env.reward_offset,
@@ -215,25 +220,23 @@ def main(cfg: OmegaConf):
         max_steps=MAX_STEPS,
         deterministic_eval=cfg.deterministic_eval,
     )
-    # TODO: If training from scratch, evaluate base policy.
-    # TODO: doing this for now to sanity check that run resuming works as intended.
+    # If training from scratch...
     if not cfg.resume:
+        # ...evaluate base policy...
         logging_callback.evaluate(model, deterministic=False, evaluate_base=True)
         if cfg.deterministic_eval:
             logging_callback.evaluate(model, deterministic=True)
         logging_callback.log_count += 1
+        quit()
 
-
-    # If training from scratch, load offline data and collect initial rollouts.
-    if not cfg.resume:
+        # ...load offline data and warm-start replay buffer...
         if cfg.load_offline_data:
             load_offline_data(model, cfg.offline_data_path, num_env, cfg.act_steps, cfg.env.reward_offset)
         if cfg.train.init_rollout_steps > 0:
             collect_initial_rollouts(model, env, cfg.train.init_rollout_steps, base_policy, cfg)	
             logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
 
-        # run value distillation
-        # TODO: Add logic to save/load trained base value function
+        # ...and train base Q and V functions.
         model.train_base_value(
             fqe_steps=cfg.base.fqe_steps,
             vd_steps=cfg.base.vd_steps,
@@ -243,14 +246,17 @@ def main(cfg: OmegaConf):
         )
     # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
     # visualize_base_value(model, eval_env, MAX_STEPS, cfg)
-    # quit()
-    # breakpoint()
+    quit()
 
     # Train the agent.
     callbacks = [checkpoint_callback, logging_callback]
+
+    # Some small sanity checks just for convenience for now. TODO: these should not be required later,
+    assert cfg.save_model_interval % cfg.eval_interval == 0, "Model save interval should be multiple of eval interval."
+
     total_timesteps = cfg.total_timesteps - model.num_timesteps if cfg.resume else cfg.total_timesteps
     model.learn(
-        total_timesteps = total_timesteps, # 20000000,
+        total_timesteps = total_timesteps,
         callback = callbacks,
         progress_bar = True,
         reset_num_timesteps = not cfg.resume,

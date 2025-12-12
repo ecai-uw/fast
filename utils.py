@@ -128,10 +128,12 @@ class LoggingCallback(BaseCallback):
 		if self.eval_episodes > 0:
 			env = self.eval_env
 
-			# Logging arrays
+			# Rollout izualization arrays.
 			rollout_vid = []
 			obs_arr = []
 			action_arr = []
+			scale_viz_arr = []
+
 
 			with torch.no_grad():
 				# Initializing rollout metrics.
@@ -154,7 +156,7 @@ class LoggingCallback(BaseCallback):
 						elif self.algorithm == 'dsrl_na':
 							action, _ = agent.predict_diffused(obs, deterministic=deterministic)
 						elif self.algorithm == 'fast':
-							action, _ = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
+							action, predict_second_return = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
 						next_obs, reward, done, info = env.step(action)
 
 						obs_arr_i.append(obs)
@@ -163,6 +165,8 @@ class LoggingCallback(BaseCallback):
 							obs_arr.append(obs[0])
 							action_arr.append(action[0])
 							rollout_vid.append(env.env_method('render')[0])
+							if predict_second_return is not None:
+								scale_viz_arr.append(predict_second_return[0].mean())
 						
 						# Post-processing environment step.
 						obs = next_obs
@@ -217,8 +221,11 @@ class LoggingCallback(BaseCallback):
 					avg_rew = 0
 					avg_shaped_rew = 0
 
-				# Computing predicted Q and V values for logged rollout.
+				# -------------------------- ROLLOUT VISUALIZATION --------------------------
 				rollout_vid = np.array(rollout_vid)
+				rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
+
+				# Computing predicted Q and V values for logged rollout.
 				obs_arr = np.array(obs_arr)
 				action_arr = np.array(action_arr)
 				# NOTE: this will treat rollout length as batch size.
@@ -231,10 +238,24 @@ class LoggingCallback(BaseCallback):
 				pred_vs = agent.base_critic_value.forward_v(
 					torch.tensor(obs_arr, device=agent.device, dtype=torch.float32)
 				).cpu().numpy()
-				rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
-				combined_frames = plot_base_value(rollout_vid_frames, pred_mean_qs, pred_vs)
+				combined_frames = plot_data_with_frames(
+					rollout_vid_frames,
+					{"pred mean Q": pred_mean_qs, "pred V": pred_vs},
+					"Base Value Function Predictions",
+				)
 				combined_frames = np.stack([np.asarray(f) for f in combined_frames], axis=0)
 				combined_frames = combined_frames.transpose(0, 3, 1, 2)
+
+				# If policy logged scaled predictions, separately visualize these as well.
+				if len(scale_viz_arr) > 0:
+					scale_viz_arr = np.array(scale_viz_arr)
+					scale_viz_frames = plot_data_with_frames(
+						rollout_vid_frames,
+						{"scale pred": scale_viz_arr},
+						"Scale Predictions Over Rollout",
+					)
+					scale_viz_frames = np.stack([np.asarray(f) for f in scale_viz_frames], axis=0)
+					scale_viz_frames = scale_viz_frames.transpose(0, 3, 1, 2)
 				
 				# -------------------------- WANDB LOGGING --------------------------
 				if self.use_wandb:
@@ -267,6 +288,11 @@ class LoggingCallback(BaseCallback):
 						wandb.log({
 							f"{name}/rollout_vid": wandb.Video(combined_frames, fps=10, format="gif")
 						}, step=self.num_timesteps)
+
+						if len(scale_viz_arr) > 0:
+							wandb.log({
+								f"{name}/scale_viz_vid": wandb.Video(scale_viz_frames, fps=10, format="gif")
+							}, step=self.num_timesteps)
 
 	def set_timesteps(self, timesteps):
 		self.total_timesteps = timesteps
@@ -478,10 +504,8 @@ def visualize_base_value(model, env, max_steps, cfg):
 		)
 
 
-def plot_base_value(frames, qs, vs):
+def plot_data_with_frames(frames, data_dict, title):
 	num_frames = len(frames)
-	y_min = min(min(qs), min(vs))
-	y_max = max(max(qs), max(vs))
 	h = frames[0].height
 	w = frames[0].width
 
@@ -493,13 +517,19 @@ def plot_base_value(frames, qs, vs):
 		buf.seek(0)
 		plt.figure(figsize=(w / 100, h / 100), dpi=100)
 		plt.xlim(0, num_frames)
-		# plt.ylim(y_min - 0.1, y_max + 0.1)
-		plt.ylim(y_min - 0.1, max(max(qs[:i+1]), max(vs[:i+1])) + 0.1)
-		plt.plot(qs[:i+1], label='Predicted Mean Q')
-		plt.plot(vs[:i+1], label='Predicted V')
+
+		y_min = min([min(v[:i+1]) for v in data_dict.values()])
+		y_max = max([max(v[:i+1]) for v in data_dict.values()])
+		# Additionally filtering bounds to be at least -1 to 1.
+		plt.ylim(y_min - 0.1, y_max + 0.1)
+
+		for label, data in data_dict.items():
+			plt.plot(data[:i+1], label=label)
 		plt.xlabel('Timestep')
 		plt.ylabel('Value')
-		plt.title('Base Value Function Predictions')
+		plt.title(title)
+		plt.axhline(0, color='black', linestyle='--', linewidth=0.5)
+		plt.tight_layout()
 		plt.legend()
 
 		plt.savefig(buf, format='png')

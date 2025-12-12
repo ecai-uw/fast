@@ -44,7 +44,6 @@ def main(cfg: OmegaConf):
     assert cfg.use_wandb, "WandB logging must be enabled."
     # If resuming from a previous run...
     if cfg.resume:
-        # TODO: ADD SOME LOGGING HERE TO INDICATE RESUMING TRAINING, AND WHICH CHECKPOINT.
         # ...run id must already be specified.
         assert cfg.wandb.id is not None, "Must provide wandb run id to resume from."
         # Manually set run_dir to match previous run.
@@ -64,6 +63,7 @@ def main(cfg: OmegaConf):
                     if int(steps) > recent_steps:
                         recent_steps = int(steps)
         assert recent_steps > 0, "No valid checkpoint found to resume from."
+        print(f"Resuming from checkpoint at step {recent_steps}.")
         model_load_path = os.path.join(cfg.run_dir, "checkpoint", f"ft_policy_{recent_steps}_steps.zip")
         buffer_load_path = os.path.join(cfg.run_dir, "checkpoint", f"ft_policy_replay_buffer_{recent_steps}_steps.pkl")
 
@@ -199,6 +199,7 @@ def main(cfg: OmegaConf):
         name_prefix='ft_policy',
         save_replay_buffer=cfg.save_replay_buffer, 
         save_vecnormalize=True,
+        only_last_buffer=True,
     )
 
     # Creating evaluation environment and logging callback.
@@ -227,7 +228,6 @@ def main(cfg: OmegaConf):
         if cfg.deterministic_eval:
             logging_callback.evaluate(model, deterministic=True)
         logging_callback.log_count += 1
-        quit()
 
         # ...load offline data and warm-start replay buffer...
         if cfg.load_offline_data:
@@ -246,7 +246,6 @@ def main(cfg: OmegaConf):
         )
     # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
     # visualize_base_value(model, eval_env, MAX_STEPS, cfg)
-    quit()
 
     # Train the agent.
     callbacks = [checkpoint_callback, logging_callback]

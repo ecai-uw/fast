@@ -180,6 +180,7 @@ def main(cfg: OmegaConf):
             diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
             critic_backup_combine_type=cfg.train.critic_backup_combine_type,
             base_gamma=cfg.base.discount,
+            base_gradient_steps=cfg.policy.base_gradient_steps,
             policy_action_condition=cfg.policy.action_condition,
             shape_rewards=cfg.policy.shape_rewards,
             cfg=cfg,
@@ -242,6 +243,8 @@ def main(cfg: OmegaConf):
             vd_steps=cfg.base.vd_steps,
             batch_size=cfg.base.batch_size,
             vd_samples=cfg.base.vd_samples,
+            pre_train=True,
+            replay_data=None,
             # lr_scheduler=cfg.base.lr_scheduler,
         )
     # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.

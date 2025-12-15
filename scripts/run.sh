@@ -8,9 +8,26 @@
 
 CONTAINER_PATH=$1
 WANDB_MODE=$2
+TASK=$3
+shift
 shift
 shift
 COMMAND=$@
+
+# Parsing task type to set config file.
+if [ "$TASK" == "robomimic_lift" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_lift.yaml"
+elif [ "$TASK" == "robomimic_can" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_can.yaml"
+elif [ "$TASK" == "robomimic_square" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_square.yaml"
+elif [ "$TASK" == "robomimic_transport" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_transport.yaml"
+else
+    echo "Unknown task type: $TASK"
+    exit 1
+fi
+COMMAND="$COMMAND_PREFIX $COMMAND"
 
 apptainer exec --nv --writable-tmpfs \
     --containall --no-home \

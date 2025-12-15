@@ -4,11 +4,11 @@ hydra:
   run:  
     dir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 
-name: robomimic_can_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+name: robomimic_transport_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
-base_policy_path: ./dppo/log/robomimic-pretrain/can/can_pre_diffusion_mlp_ta4_td20/2024-06-28_13-29-54/checkpoint/state_5000.pt
-offline_data_path: ./dppo/data/robomimic/can/train.npz
+base_policy_path: ./dppo/log/robomimic-pretrain/transport/transport_pre_diffusion_mlp_ta8_td100_ddim-100steps_size2048/2025-04-21_08-40-08_47/checkpoint/state_3000.pt
+offline_data_path: ./dppo/log/robomimic/transport/train.npz
 dppo_path: ./dppo
 normalization_path: ./dppo/log/robomimic/${env_name}/normalization.npz
 
@@ -18,7 +18,7 @@ wandb:
   project: fast
   # run: ${now:%H-%M-%S}_${name}
   # name: ${name}
-  group: robomimic-can
+  group: robomimic-transport
   id: null # if resume is true, this must be provided.
   save_id_local_path: null # relative path to log_dir to save wandb run id - helpful for slurm pre-emption.
 
@@ -26,14 +26,14 @@ algorithm: fast # options are: dsrl_na, dsrl_sac
 
 seed: 1
 device: cuda:0
-env_name: can
-log_dir: ./logs 
-obs_dim: 23
-action_dim: 7 # this is base action dim!
+env_name: transport
+log_dir: ./logs
+obs_dim: 59
+action_dim: 14
 cond_steps: 1
-act_steps: 4 # action chunk size of base policy
+act_steps: 8 # action chunk size of base policy
 load_offline_data: True # if true, load offline demonstration data into replay buffer
-deterministic_eval: False # if true, run eval with both deterministic actions, as well as stochastic
+deterministic_eval: False
 
 total_timesteps: 200000
 eval_interval: 500
@@ -41,11 +41,12 @@ num_evals: 200
 save_model_interval: 10000
 save_replay_buffer: True
 
+
 env:
   n_envs:  4
   n_eval_envs: 25
   name: ${env_name}
-  max_episode_steps: 300
+  max_episode_steps: 800
   reset_at_iteration: False
   save_video: False
   best_reward_threshold_for_success: 1 
@@ -56,7 +57,10 @@ env:
       low_dim_keys: ['robot0_eef_pos',
                     'robot0_eef_quat',
                     'robot0_gripper_qpos',
-                    'object'] # same order of preprocessed observations
+                    "robot1_eef_pos",
+                    "robot1_eef_quat",
+                    "robot1_gripper_qpos",
+                    'object'] 
     multi_step:
       n_obs_steps: ${cond_steps}
       n_action_steps: ${act_steps}
@@ -66,6 +70,9 @@ env:
     robot0_eef_pos: 3
     robot0_eef_quat: 4
     robot0_gripper_qpos: 2
+    robot1_eef_pos: 3
+    robot1_eef_quat: 4
+    robot1_gripper_qpos: 2
     object: 14
 
 policy:
@@ -85,14 +92,14 @@ train:
   train_freq: 1 # Update model after this many environment steps
   utd: 20 # Number of gradient steps to take per update
   use_layer_norm: True
-  layer_size: 2048 # Layer size for actor and critic
+  layer_size: 128 # Layer size for actor and critic
   num_layers: 3 # Number of layers for actor and critic
   discount: 0.95
   ent_coef: -1
   target_ent: 0.0
-  init_rollout_steps: 1501 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
+  init_rollout_steps: 20001 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
   init_rollout_noise_magnitude: 0.1 # Initial noise magnitude for rollout actions
-  # action_magnitude: 1.5 # Maximum action magnitude in noise action space
+  # action_magnitude: 1 # Maximum action magnitude in noise action space
   n_critics: 2 # Number of critic Q networks
   critic_backup_combine_type: min
 
@@ -110,18 +117,19 @@ base:
   discount: 0.99
   n_critics: ${train.n_critics}
   critic_backup_combine_type: ${train.critic_backup_combine_type}
-
+  
 model:
   _target_: model.diffusion.diffusion_eval.DiffusionEval
   ft_denoising_steps: 0
   predict_epsilon: True
   denoised_clip_value: 1.0
   randn_clip_value: 3
+  #
   network_path: ${base_policy_path}
   network:
     _target_: model.diffusion.mlp_diffusion.DiffusionMLP
-    time_dim: 16
-    mlp_dims: [512, 512, 512]
+    time_dim: 32
+    mlp_dims: [2048, 2048, 2048]
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${act_steps}
@@ -129,8 +137,9 @@ model:
   horizon_steps: ${act_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
-  denoising_steps: 20
+  denoising_steps: 100
   device: ${device}
   use_ddim: True
-  ddim_steps: 8
+  ddim_steps: 100
   controllable_noise: True
+

@@ -4,11 +4,11 @@ hydra:
   run:  
     dir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 
-name: robomimic_can_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+name: robomimic_lift_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
-base_policy_path: ./dppo/log/robomimic-pretrain/can/can_pre_diffusion_mlp_ta4_td20/2024-06-28_13-29-54/checkpoint/state_5000.pt
-offline_data_path: ./dppo/data/robomimic/can/train.npz
+base_policy_path: ./dppo/log/robomimic-pretrain/lift/lift_pre_diffusion_mlp_ta4_td20/2024-06-28_14-47-58/checkpoint/state_5000.pt
+offline_data_path: ./dppo/data/robomimic/lift/train.npz
 dppo_path: ./dppo
 normalization_path: ./dppo/log/robomimic/${env_name}/normalization.npz
 
@@ -18,7 +18,7 @@ wandb:
   project: fast
   # run: ${now:%H-%M-%S}_${name}
   # name: ${name}
-  group: robomimic-can
+  group: robomimic-lift
   id: null # if resume is true, this must be provided.
   save_id_local_path: null # relative path to log_dir to save wandb run id - helpful for slurm pre-emption.
 
@@ -26,12 +26,12 @@ algorithm: fast # options are: dsrl_na, dsrl_sac
 
 seed: 1
 device: cuda:0
-env_name: can
+env_name: lift
 log_dir: ./logs 
-obs_dim: 23
-action_dim: 7 # this is base action dim!
+obs_dim: 19
+action_dim: 7
 cond_steps: 1
-act_steps: 4 # action chunk size of base policy
+act_steps: 4 
 load_offline_data: True # if true, load offline demonstration data into replay buffer
 deterministic_eval: False # if true, run eval with both deterministic actions, as well as stochastic
 
@@ -66,7 +66,7 @@ env:
     robot0_eef_pos: 3
     robot0_eef_quat: 4
     robot0_gripper_qpos: 2
-    object: 14
+    object: 10
 
 policy:
   type: residual # residual, residual_scale, residual_force, residual_scale2, residual_force2
@@ -83,7 +83,7 @@ train:
   actor_lr: 3e-4
   batch_size: 256
   train_freq: 1 # Update model after this many environment steps
-  utd: 20 # Number of gradient steps to take per update
+  utd: 30 # Number of gradient steps to take per update
   use_layer_norm: True
   layer_size: 2048 # Layer size for actor and critic
   num_layers: 3 # Number of layers for actor and critic

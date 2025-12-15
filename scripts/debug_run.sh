@@ -10,6 +10,8 @@ CONTAINER_PATH=~/containers/fast.sif
 WANDB_MODE=disabled
 
 METHOD=$1
+TASK=$2
+shift
 shift
 COMMAND=$@
 
@@ -25,15 +27,22 @@ if [ "$METHOD" == "local" ]; then
 
 elif [ "$METHOD" == "local-container" ]; then
 
-    apptainer exec --nv --writable-tmpfs \
-        --containall --no-home \
-        --home /root \
-        --bind $(pwd):/opt/code/fast/ \
-        --env WANDB_MODE=$WANDB_MODE \
-        --env WANDB_API_KEY=$WANDB_API_KEY \
-        --pwd /opt/code/fast/ \
-        $CONTAINER_PATH \
-        python train_fast.py \
+    # apptainer exec --nv --writable-tmpfs \
+    #     --containall --no-home \
+    #     --home /root \
+    #     --bind $(pwd):/opt/code/fast/ \
+    #     --env WANDB_MODE=$WANDB_MODE \
+    #     --env WANDB_API_KEY=$WANDB_API_KEY \
+    #     --pwd /opt/code/fast/ \
+    #     $CONTAINER_PATH \
+    #     python train_fast.py \
+    #     num_evals=2 env.n_envs=1 env.n_eval_envs=1 \
+    #     train.init_rollout_steps=20 \
+    #     base.fqe_steps=50 base.vd_steps=50 \
+    #     total_timesteps=10 \
+    #     $COMMAND
+
+    ./scripts/run.sh $CONTAINER_PATH $WANDB_MODE $TASK \
         num_evals=2 env.n_envs=1 env.n_eval_envs=1 \
         train.init_rollout_steps=20 \
         base.fqe_steps=50 base.vd_steps=50 \

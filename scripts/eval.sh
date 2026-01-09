@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # General usage:
-# bash scripts/run.sh [CONTAINER_PATH] [WANDB_MODE] [TASK] [ARGS]
+# bash scripts/eval.sh [CONTAINER_PATH] [WANDB_MODE] [TASK] [ARGS]
 
 # method type
 
@@ -36,10 +36,10 @@ apptainer exec --nv --writable-tmpfs \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --pwd /opt/code/fast/ \
     $CONTAINER_PATH \
-    python train_fast.py \
+    python eval_fast.py \
     $COMMAND
 
-# Some notes for the command above:
+    # Some notes for the command above:
 # --nv:
 #       enables NVIDIA GPU support inside the container.
 #

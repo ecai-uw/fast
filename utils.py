@@ -420,13 +420,13 @@ def preprocess_offline_data(offline_data, chunk_size, reward_offset):
 		'terminals': processed_terminals,
 	}
 
-
 def visualize_base_value(model, env, max_steps, cfg):
 	"""
 	For now, assume FAST environment and model.
 	"""
-	log_dir = f"/home/ecai/debug/fast"
-	log_dir += f"/scale={scale}"
+	scale = 1.0
+	log_dir = f"debug/fast/{cfg.env.name}"
+	log_dir += f"/scale={scale}/seed={cfg.seed}"
 	# log_dir += f"offset={cfg.env.reward_offset}"
 	# log_dir += f"_fqe={cfg.base.fqe_steps}_vd={cfg.base.vd_steps}"
 	# log_dir += f"_init_steps={cfg.train.init_rollout_steps}"
@@ -436,6 +436,7 @@ def visualize_base_value(model, env, max_steps, cfg):
 	obs_arr = []
 	action_arr = []
 	done_arr = []
+	time_to_goal_arr = np.zeros(cfg.env.n_eval_envs)
 	success_arr = np.zeros(cfg.env.n_eval_envs)
 	chunk_size = model.diffusion_act_chunk
 
@@ -443,12 +444,23 @@ def visualize_base_value(model, env, max_steps, cfg):
 		obs = env.reset()
 		for _ in tqdm(range(max_steps)):
 			action, _ = model.predict_diffused(obs, deterministic=True, sample_base=True)
+			# Manually scaling actions.
+			action = action.reshape(-1, cfg.act_steps, cfg.action_dim)
+			action[:, :, 0:3] *= np.power(10.0, scale)
+			action = action.reshape(-1, cfg.act_steps * cfg.action_dim)
+
 			next_obs, reward, done, info = env.step(action)
+			# TODO: need to extract reaching check, and grasping check
+			# TODO: also compute time-to-reach and time-to-grasp
+			breakpoint()
 
 			obs_arr.append(obs)
 			action_arr.append(action)
 			done_arr.append(done)
-			success_arr[reward > -cfg.env.reward_offset * chunk_size] = 1
+			is_success_i = reward > -cfg.env.reward_offset * chunk_size
+			# success_arr[reward > -cfg.env.reward_offset * chunk_size] = 1
+			success_arr[is_success_i] = 1
+			time_to_goal_arr[~is_success_i] += 1
 
 			obs = next_obs
 			rollout_vid.append(env.env_method('render'))
@@ -475,6 +487,13 @@ def visualize_base_value(model, env, max_steps, cfg):
 
 	# Logging stuff.
 	num_envs = obs_arr.shape[1]
+	print("Total success rate: ", np.sum(success_arr) / num_envs)
+	avg_time_to_goal = np.mean(time_to_goal_arr)
+	avg_time_to_goal_success = np.mean(time_to_goal_arr[success_arr == 1]) if np.sum(success_arr) > 0 else max_steps
+	print("Average time to goal: ", avg_time_to_goal)
+	print("Average time to goal (successful episodes): ", avg_time_to_goal_success)
+	return
+	
 	for env_i in tqdm(range(num_envs)):
 		rollout_vid_i = rollout_vid[:, env_i, ...]
 		pred_mean_qs_i = pred_mean_q_arr[:, env_i, 0]
@@ -494,15 +513,22 @@ def visualize_base_value(model, env, max_steps, cfg):
 		plt.title('Base Value Function Predictions')
 		plt.legend()
 		plt.savefig(f"{log_dir}/value_plot_{tag}.png")
+		plt.close()
 
-		combined_frames = plot_base_value(rollout_vid_frames_i, pred_mean_qs_i, pred_vs_i)
+		combined_frames = plot_data_with_frames(
+			rollout_vid_frames_i, 
+			{
+				"pred mean Q": pred_mean_qs_i, 
+				"pred V": pred_vs_i,
+			},
+			"Base Value Function Predictions",
+			)
 		combined_frames[0].save(
 			f"{log_dir}/rollout_{tag}.gif",
 			save_all=True,
 			append_images=combined_frames[1:],
 			loop=0,
 		)
-
 
 def plot_data_with_frames(frames, data_dict, title):
 	num_frames = len(frames)

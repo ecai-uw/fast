@@ -248,7 +248,8 @@ def main(cfg: OmegaConf):
             # lr_scheduler=cfg.base.lr_scheduler,
         )
     # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
-    # visualize_base_value(model, eval_env, MAX_STEPS, cfg)
+    visualize_base_value(model, eval_env, MAX_STEPS, cfg)
+    quit()
 
     # Train the agent.
     callbacks = [checkpoint_callback, logging_callback]

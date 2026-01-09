@@ -15,7 +15,14 @@ import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.obs_utils as ObsUtils
 
 
-def make_robomimic_env(render=False, env='square', normalization_path=None, low_dim_keys=None, dppo_path=None):
+def make_robomimic_env(
+	render=False, 
+	env='square', 
+	normalization_path=None, 
+	low_dim_keys=None, 
+	dppo_path=None,
+	impedance_mode='fixed',
+):
 	wrappers = OmegaConf.create({
 		'robomimic_lowdim': {
 			'normalization_path': normalization_path,
@@ -41,6 +48,10 @@ def make_robomimic_env(render=False, env='square', normalization_path=None, low_
 	with open(robomimic_env_cfg_path, "r") as f:
 		env_meta = json.load(f)
 	env_meta["reward_shaping"] = False
+
+	# TODO: manually setting controller impedance mode for now
+	env_meta["env_kwargs"]["controller_configs"]["impedance_mode"] = impedance_mode
+
 	env = EnvUtils.create_env_from_metadata(
 		env_meta=env_meta,
 		render=False,
@@ -176,7 +187,9 @@ class ActionChunkWrapper(gymnasium.Env):
 		obs = obs_[-1]
 		reward = sum(reward_)
 		done = np.max(done_)
-		info = info_[-1]
+		info = info_[-1].copy()
+		# Also adding entire chunk info history
+		info["chunk_info"] = info_.copy()
 		if self.count >= self.max_episode_steps:
 			done = True
 		if done:
@@ -228,4 +241,87 @@ class DiffusionPolicyEnvWrapper(VecEnvWrapper):
 		self.obs = torch.tensor(obs, device=self.device, dtype=torch.float32)
 		obs_out = self.obs
 		return obs_out.detach().cpu().numpy()
-	
+
+
+class LiftEvalWrapper(ObservationWrapperRobomimic):
+	def __init__(self, env, reward_offset=1):
+		super().__init__(env, reward_offset=reward_offset)
+		self.subgoals = ['reach', 'grasp', 'success']
+    
+    # only overriding step to extract subgoal information
+	def step(self, action):
+		raw_obs, reward, done, info = self.env.step(action)
+		reward = (reward - self.reward_offset)
+		obs = raw_obs['state'].flatten()
+
+		lift_env = self.env.env.env
+		# Check reach
+		cube_pos = lift_env.sim.data.body_xpos[lift_env.cube_body_id]
+		gripper_site_pos = lift_env.sim.data.site_xpos[lift_env.robots[0].eef_site_id]
+		dist = np.linalg.norm(cube_pos - gripper_site_pos)
+		reach = dist < 0.05
+		# Check grasp
+		grasp = lift_env._check_grasp(
+			gripper=lift_env.robots[0].gripper, object_geoms=lift_env.cube
+		)
+		# Check success
+		success = lift_env._check_success()
+
+		info['reach'] = reach
+		info['grasp'] = grasp
+		info['success'] = success
+			
+		return obs, reward, done, info
+
+class CanEvalWrapper(ObservationWrapperRobomimic):
+	def __init__(self, env, reward_offset=1):
+		super().__init__(env, reward_offset=reward_offset)
+		self.subgoals = ['reach', 'grasp', 'hover', 'success']
+
+	# only overriding step to extract subgoal information
+	def step(self, action):
+		raw_obs, reward, done, info = self.env.step(action)
+		reward = (reward - self.reward_offset)
+		obs = raw_obs['state'].flatten()
+
+		can_env = self.env.env.env
+		can_obj = can_env.objects[can_env.object_id]
+		can_obj_id = can_env.obj_body_id["Can"]
+
+		# Check reach
+		can_pos = can_env.sim.data.body_xpos[can_obj_id]
+		gripper_site_pos = can_env.sim.data.site_xpos[can_env.robots[0].eef_site_id]
+		dist = np.linalg.norm(can_pos - gripper_site_pos)
+		reach = dist < 0.05
+
+		# Check grasp
+		grasp = can_env._check_grasp(
+			gripper=can_env.robots[0].gripper, object_geoms=can_obj
+		)
+
+		# Check hover
+		can_target_bin = can_env.target_bin_placements[can_env.object_to_id["can"]]
+		y_check = np.abs(can_pos[1] - can_target_bin[1]) < can_env.bin_size[1] / 4.0
+		x_check = np.abs(can_pos[0] - can_target_bin[0]) < can_env.bin_size[0] / 4.0
+		hover = y_check and x_check
+
+		# Check success
+		success = can_env._check_success()
+
+		info['reach'] = reach
+		info['grasp'] = grasp
+		info['hover'] = hover
+		info['success'] = success
+			
+		return obs, reward, done, info
+
+
+eval_wrapper_dict = {
+	'lift': LiftEvalWrapper,
+	'can': CanEvalWrapper,
+}
+
+subgoal_list_dict = {
+	'lift': ['reach', 'grasp', 'success'],
+	'can': ['reach', 'grasp', 'hover', 'success'],
+}

@@ -6,6 +6,8 @@
 # TODO: more args to add in the future: task type (this will determine configs)
 # method type
 
+# Usage: scripts/debug_run.sh [method] [task] [additional args]
+
 CONTAINER_PATH=~/containers/fast.sif
 WANDB_MODE=disabled
 

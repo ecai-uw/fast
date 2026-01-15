@@ -70,6 +70,7 @@ env:
 
 policy:
   type: residual # residual, residual_scale, residual_force, residual_scale2, residual_force2
+  impedance_mode: fixed # fixed, variable, variable_kp
   action_condition: True # Whether to condition policy on base action.
   shape_rewards: False # Whether to use PBRS from base policy values.
   base_gradient_steps: 0 # Number of gradient steps to take on base critic/value per update. If -1, same as utd. If 0, no updates.
@@ -134,3 +135,11 @@ model:
   use_ddim: True
   ddim_steps: 8
   controllable_noise: True
+
+# TODO: Controller parameters - these are manually hardcoded/copied for now.
+controller:
+  damping: 1.0
+  damping_limits: [0.0, 10.0]
+  impedance_mode: ${policy.impedance_mode} # fixed, variable, variable_kp
+  kp: 150.0
+  kp_limits: [0.0, 1500.0] # TODO: for now, the 1500 is hardcoded from the make_robomimic_env helper function.

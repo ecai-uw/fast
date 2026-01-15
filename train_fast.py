@@ -19,7 +19,16 @@ from stable_baselines3 import SAC, DSRL, FAST
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
-from env_utils import DiffusionPolicyEnvWrapper, ObservationWrapperRobomimic, ObservationWrapperGym, ActionChunkWrapper, make_robomimic_env
+from env_utils import (
+    DiffusionPolicyEnvWrapper,
+    ResidualPolicyWrapper,
+    ObservationWrapperRobomimic, 
+    ObservationWrapperGym, 
+    ActionChunkWrapper, 
+    make_robomimic_env,
+    eval_wrapper_dict,
+    subgoal_list_dict,
+)
 from utils import load_base_policy, load_offline_data, collect_initial_rollouts, LoggingCallback, visualize_base_value
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -106,8 +115,17 @@ def main(cfg: OmegaConf):
             env = gym.make(cfg.env_name)
             env = ObservationWrapperGym(env, cfg.normalization_path)
         elif cfg.env_name in ['lift', 'can', 'square', 'transport']:
-            env = make_robomimic_env(render=True, env=cfg.env_name, normalization_path=cfg.normalization_path, low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, dppo_path=cfg.dppo_path)
-            env = ObservationWrapperRobomimic(env, reward_offset=cfg.env.reward_offset)
+            env = make_robomimic_env(
+                render=True, 
+                env=cfg.env_name, 
+                normalization_path=cfg.normalization_path, 
+                low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, 
+                dppo_path=cfg.dppo_path,
+                impedance_mode=cfg.policy.impedance_mode,
+            )
+            # env = ObservationWrapperRobomimic(env, reward_offset=cfg.env.reward_offset)
+            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset)
+        env = ResidualPolicyWrapper(env, cfg)
         env = ActionChunkWrapper(env, cfg, max_episode_steps=cfg.env.max_episode_steps)
         return env
 
@@ -180,9 +198,6 @@ def main(cfg: OmegaConf):
             diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
             critic_backup_combine_type=cfg.train.critic_backup_combine_type,
             base_gamma=cfg.base.discount,
-            base_gradient_steps=cfg.policy.base_gradient_steps,
-            policy_action_condition=cfg.policy.action_condition,
-            shape_rewards=cfg.policy.shape_rewards,
             cfg=cfg,
         )
 
@@ -221,6 +236,7 @@ def main(cfg: OmegaConf):
         algorithm=cfg.algorithm,
         max_steps=MAX_STEPS,
         deterministic_eval=cfg.deterministic_eval,
+        subgoal_list=subgoal_list_dict[cfg.env_name],
     )
     # If training from scratch...
     if not cfg.resume:
@@ -247,9 +263,6 @@ def main(cfg: OmegaConf):
             replay_data=None,
             # lr_scheduler=cfg.base.lr_scheduler,
         )
-    # Debugging step: evaluate and visualize base Q and V and demo trajectories, see if they make sense.
-    visualize_base_value(model, eval_env, MAX_STEPS, cfg)
-    quit()
 
     # Train the agent.
     callbacks = [checkpoint_callback, logging_callback]

@@ -55,6 +55,7 @@ class LoggingCallback(BaseCallback):
 		algorithm='dsrl_sac',
 		max_steps=-1,
 		deterministic_eval=False,
+		subgoal_list=["success"],
 	):
 		super().__init__(verbose)
 		self.action_chunk = action_chunk
@@ -76,6 +77,9 @@ class LoggingCallback(BaseCallback):
 		self.algorithm = algorithm
 		self.max_steps = max_steps
 		self.deterministic_eval = deterministic_eval
+		self.subgoal_list = subgoal_list
+
+		assert "success" in self.subgoal_list, "Success check must be in subgoal list for logging."
 
 	def _on_step(self):
 		for info in self.locals['infos']:
@@ -137,26 +141,27 @@ class LoggingCallback(BaseCallback):
 
 			with torch.no_grad():
 				# Initializing rollout metrics.
-				success, rews, times_to_goal = [], [], []
+				rews = []
 				rew_total, shaped_rew_total, total_ep = 0, 0, 0
 				rew_ep = np.zeros(self.num_eval_env)
 				shaped_rew_ep = np.zeros(self.num_eval_env)
 				delta_action_norms = []
+				subgoal_rate_arrs = {subgoal: [] for subgoal in self.subgoal_list}
+				subgoal_time_arrs = {subgoal: [] for subgoal in self.subgoal_list}
+				subgoal_success_time_arrs = {subgoal: [] for subgoal in self.subgoal_list}
 
 				for i in range(self.eval_episodes):
 					obs = env.reset()
-					success_i = np.zeros(obs.shape[0])
-					time_to_goal_i = np.zeros(obs.shape[0])
 					obs_arr_i = []
 					r = []
 					delta_action_norms_i = []
-					for _ in range(self.max_steps):
-						if self.algorithm == 'dsrl_sac':
-							action, _ = agent.predict(obs, deterministic=deterministic)
-						elif self.algorithm == 'dsrl_na':
-							action, _ = agent.predict_diffused(obs, deterministic=deterministic)
-						elif self.algorithm == 'fast':
-							action, predict_second_return = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
+
+					subgoal_rate_arrs_i = {subgoal: np.zeros(obs.shape[0]) for subgoal in self.subgoal_list}
+					subgoal_time_arrs_i = {subgoal: np.zeros(obs.shape[0]) + self.max_steps for subgoal in self.subgoal_list}
+
+					for step_i in range(self.max_steps):
+						# Sample action and step environment.
+						action, predict_second_return = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
 						next_obs, reward, done, info = env.step(action)
 
 						obs_arr_i.append(obs)
@@ -167,6 +172,16 @@ class LoggingCallback(BaseCallback):
 							rollout_vid.append(env.env_method('render')[0])
 							if predict_second_return is not None:
 								scale_viz_arr.append(predict_second_return[0].mean())
+
+						# Ugly manual check for subgoal success info.
+						chunk_info = [info_dict["chunk_info"] for info_dict in info]
+						for env_i in range(obs.shape[0]):
+							for chunk_step_i in range(self.action_chunk):
+								step_info = chunk_info[env_i][chunk_step_i]
+								for subgoal in self.subgoal_list:
+									if step_info[subgoal] and subgoal_rate_arrs_i[subgoal][env_i] == 0:
+										subgoal_rate_arrs_i[subgoal][env_i] = 1
+										subgoal_time_arrs_i[subgoal][env_i] = step_i + chunk_step_i / self.action_chunk
 						
 						# Post-processing environment step.
 						obs = next_obs
@@ -175,20 +190,23 @@ class LoggingCallback(BaseCallback):
 						rew_ep[done] = 0 
 						total_ep += np.sum(done)
 						delta_action_norms_i.append(np.linalg.norm(action, axis=-1))
-
-						# Updating success info.
-						is_success_i = reward > -self.rew_offset * self.action_chunk
-						time_to_goal_i[~is_success_i] += 1
-						success_i[is_success_i] = 1
 						r.append(reward)
 
 					# ------------------------- EPISODE POST-PROCESSING--------------------------
 
 					# Updating rollout metrics.
-					success.append(success_i)
-					times_to_goal.append(time_to_goal_i)
 					rews.append(np.mean(np.array(r)))
 					delta_action_norms.append(np.array(delta_action_norms_i).mean())
+
+					# Updating subgoal metrics.
+					for subgoal in self.subgoal_list:
+						subgoal_rate_arrs[subgoal].append(subgoal_rate_arrs_i[subgoal].mean())
+						subgoal_time_arrs[subgoal].append(subgoal_time_arrs_i[subgoal].mean())
+						success_i = subgoal_rate_arrs_i[subgoal] == 1
+						subgoal_success_time_arrs[subgoal].append(
+							subgoal_time_arrs_i[subgoal][success_i].mean()
+							if np.sum(success_i) > 0 else self.max_steps
+						)
 					print(f'eval episode {i} at timestep {self.total_timesteps}')
 
 					# Computing shaped rewards with obs - next_obs pairs.
@@ -205,14 +223,13 @@ class LoggingCallback(BaseCallback):
 				
 				# ------------------------- MULTI-EPISODE EVALUATION POST-PROCESSING--------------------------
 
-				# Computing evaluation metrics.
-				success = np.array(success).flatten()
-				times_to_goal = np.array(times_to_goal).flatten()
-				success_rate = np.mean(success)
-				avg_time_to_goal = np.mean(times_to_goal)
-				avg_time_to_goal_success = np.mean(times_to_goal[success == 1]) if np.sum(success) > 0 else self.max_steps
-				throughput = success_rate / avg_time_to_goal if avg_time_to_goal > 0 else 0
+				# Computing evaluation and subgoal metrics - this will include success rate.
 				delta_action_norms = np.array(delta_action_norms).mean()
+				for subgoal in self.subgoal_list:
+					subgoal_rate_arrs[subgoal] = np.array(subgoal_rate_arrs[subgoal]).mean()
+					subgoal_time_arrs[subgoal] = np.array(subgoal_time_arrs[subgoal]).mean()
+					subgoal_success_time_arrs[subgoal] = np.array(subgoal_success_time_arrs[subgoal]).mean()
+				throughput = subgoal_rate_arrs["success"] / subgoal_time_arrs["success"]
 
 				if total_ep > 0:
 					avg_rew = rew_total / total_ep
@@ -260,26 +277,29 @@ class LoggingCallback(BaseCallback):
 				# -------------------------- WANDB LOGGING --------------------------
 				if self.use_wandb:
 					name = 'eval_base' if evaluate_base else 'eval'
-					if deterministic:
-						wandb.log({
-							f"{name}/success_rate_deterministic": success_rate,
-							f"{name}/reward_deterministic": avg_rew,
-						}, step=self.num_timesteps)
-					else:
-						wandb.log({
-							f"{name}/success_rate": success_rate,
-							f"{name}/reward": avg_rew,
-							f"{name}/timesteps": self.total_timesteps,
-						}, step=self.num_timesteps)
+					wandb.log({
+						# f"{name}/success_rate": success_rate,
+						f"{name}/reward": avg_rew,
+						f"{name}/timesteps": self.total_timesteps,
+					}, step=self.num_timesteps)
 					
 					# Log additional throughput metrics.
 					wandb.log({
 						f"{name}/shaped_reward": avg_shaped_rew,
-						f"{name}/avg_time_to_goal": avg_time_to_goal,
-						f"{name}/avg_time_to_goal_success": avg_time_to_goal_success,
 						f"{name}/throughput": throughput,
 						f"{name}/delta_action_norm": delta_action_norms,
 					}, step=self.num_timesteps)
+
+					# Log subgoal metrics.
+					subgoal_log_dict = {
+						f"{name}/{subgoal}_rate": subgoal_rate_arrs[subgoal] for subgoal in self.subgoal_list
+					}
+					subgoal_log_dict.update({
+						f"{name}/{subgoal}_time": subgoal_success_time_arrs[subgoal] for subgoal in self.subgoal_list
+					})
+					wandb.log(subgoal_log_dict, step=self.num_timesteps)
+
+					# TODO: CLEAN UP THE OBSOLETE METRICS/LOGS.
 
 					# Log rollout video.
 					with warnings.catch_warnings():
@@ -303,25 +323,20 @@ def collect_initial_rollouts(model, env, num_steps, base_policy, cfg):
 	obs = env.reset()
 	for i in tqdm(range(num_steps)):
 		noise = torch.randn(cfg.env.n_envs, cfg.act_steps, cfg.action_dim).to(device=cfg.device)
-		# if cfg.algorithm == 'dsrl_sac':
-		# 	noise[noise < -cfg.train.action_magnitude] = -cfg.train.action_magnitude
-		# 	noise[noise > cfg.train.action_magnitude] = cfg.train.action_magnitude
 		action = base_policy(torch.tensor(obs, device=cfg.device, dtype=torch.float32), noise)
+		action = action.reshape(-1, cfg.act_steps * cfg.action_dim)
+		if model.policy_impedance_mode != "fixed":
+			action = model.augment_controller_action(action)
 
 		# Add initial rollout noise for better coverage, if necessary.
+		# NOTE: consider adding noise before augmenting controller action?
 		if cfg.train.init_rollout_noise_magnitude > 0:
 			action += np.random.rand(*action.shape) * 2 * cfg.train.init_rollout_noise_magnitude - cfg.train.init_rollout_noise_magnitude
 
 		next_obs, reward, done, info = env.step(action)
-		# if cfg.algorithm == 'dsrl_na':
-		# 	action_store = action
-		# elif cfg.algorithm == 'dsrl_sac':
-		# 	action_store = noise.detach().cpu().numpy()
 		if cfg.algorithm == 'fast':
 			action_store = action
-		action_store = action_store.reshape(-1, action_store.shape[1] * action_store.shape[2])
-		# if cfg.algorithm == 'dsrl_sac':
-		# 	action_store = model.policy.scale_action(action_store)
+
 		model.replay_buffer.add(
 				obs=obs,
 				next_obs=next_obs,
@@ -334,13 +349,7 @@ def collect_initial_rollouts(model, env, num_steps, base_policy, cfg):
 	model.replay_buffer.final_offline_step()
 	
 def load_offline_data(model, offline_data_path, n_env, chunk_size, reward_offset):
-	# this function should only be applied with dsrl_na
 	offline_data = np.load(offline_data_path)
-	# obs = offline_data['states']
-	# next_obs = offline_data['states_next']
-	# actions = offline_data['actions']
-	# rewards = offline_data['rewards']
-	# terminals = offline_data['terminals']
 	
 	# Check if data needs to be pre-processed or not.
 	if 'traj_lengths' in offline_data:
@@ -356,6 +365,10 @@ def load_offline_data(model, offline_data_path, n_env, chunk_size, reward_offset
 		actions = offline_data['actions']
 		rewards = offline_data['rewards']
 		terminals = offline_data['terminals']
+
+	# Depending on policy/env impedance mode, augment actions based on controller config.
+	if model.policy_impedance_mode != "fixed":
+		actions = model.augment_controller_action(actions)
 
 	for i in range(int(obs.shape[0]/n_env)):
 		model.replay_buffer.add(

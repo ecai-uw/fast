@@ -102,6 +102,7 @@ def main(cfg: OmegaConf):
     assert num_env == 1, "Evaluation doesn't need training env - set to 1."
 
     # TODO: manually setting impedance mode for now
+    impedance_mode = "variable"
     def make_env():
         if cfg.env_name in ['halfcheetah-medium-v2', 'hopper-medium-v2', 'walker2d-medium-v2']:
             env = gym.make(cfg.env_name)
@@ -120,8 +121,8 @@ def main(cfg: OmegaConf):
         env = ActionChunkWrapper(env, cfg, max_episode_steps=cfg.env.max_episode_steps)
         return env
 
-    env = make_env()
-    breakpoint()
+    # env = make_env()
+    # breakpoint()
 
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)
     env.seed(cfg.seed + 1)
@@ -206,6 +207,8 @@ def main(cfg: OmegaConf):
     # Visualize base policy value function.
     from tqdm import tqdm
     scale = 0.0
+    damping = 0.1
+    kp = 150
     save_video = True
     sample_base = False if cfg.resume else True
     plot_values = False
@@ -213,7 +216,8 @@ def main(cfg: OmegaConf):
     # Only save video when seed = 1
     save_video = save_video and (cfg.seed == 1)
     log_dir = f"debug/fast/{cfg.env.name}"
-    log_dir += f"/scale={scale}"
+    # log_dir += f"/scale={scale}"
+    log_dir += f"/kp={kp}_damping={damping}"
     if cfg.resume:
         log_dir += f"_resume={cfg.wandb.id}"
     os.makedirs(log_dir, exist_ok=True)
@@ -243,10 +247,18 @@ def main(cfg: OmegaConf):
         for step_i in tqdm(range(MAX_STEPS)):
             action, _ = model.predict_diffused(obs, deterministic=True, sample_base=sample_base)
             # Manually scaling actions.
-            action = action.reshape(-1, cfg.act_steps, cfg.action_dim)
-            action[:, :, 0:3] *= np.power(10.0, scale)
-            action = action.reshape(-1, cfg.act_steps * cfg.action_dim)
+            # action = action.reshape(-1, cfg.act_steps, cfg.action_dim)
+            # action[:, :, 0:3] *= np.power(10.0, scale)
+            # action = action.reshape(-1, cfg.act_steps * cfg.action_dim)
 
+            # TODO: manually setting kp
+            action = action.reshape(-1, cfg.act_steps, cfg.action_dim)
+            damping_action = np.ones((action.shape[0], action.shape[1], 6), dtype=np.float32) * damping
+            kp_action = np.ones((action.shape[0], action.shape[1], 6), dtype=np.float32) * kp
+            action = np.concatenate([damping_action, kp_action, action], axis=-1)
+            action = action.reshape(-1, cfg.act_steps * (cfg.action_dim + 12))
+
+            # Step env.
             next_obs, reward, done, info = eval_env.step(action)
 
             # Ugly manual check for grasp and success from chunk info.

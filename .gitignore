@@ -23,6 +23,7 @@ wandb/
 dppo/log/
 dppo/checkpoints/
 dppo/data/
+debug/
 
 # Setuptools distribution and build folders.
 /dist/

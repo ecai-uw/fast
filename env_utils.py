@@ -27,6 +27,7 @@ def make_robomimic_env(
 		'robomimic_lowdim': {
 			'normalization_path': normalization_path,
 			'low_dim_keys': low_dim_keys,
+			'impedance_mode': impedance_mode,
 		},
 	})
 	obs_modality_dict = {
@@ -51,6 +52,9 @@ def make_robomimic_env(
 
 	# TODO: manually setting controller impedance mode for now
 	env_meta["env_kwargs"]["controller_configs"]["impedance_mode"] = impedance_mode
+	env_meta["env_kwargs"]["controller_configs"]["kp_limits"] = [0, 1500]
+	# TODO: Exposing controller config parameters to robomimic env for normalization purposes.
+	wrappers.robomimic_lowdim.controller_configs = env_meta["env_kwargs"]["controller_configs"]
 
 	env = EnvUtils.create_env_from_metadata(
 		env_meta=env_meta,
@@ -63,6 +67,80 @@ def make_robomimic_env(
 		env = wrapper_dict[wrapper](env, **args)
 	return env
 
+class ResidualPolicyWrapper(gym.Env):
+	def __init__(
+		self,
+		env,
+		cfg,
+	):
+		self.env = env
+		self.cfg = cfg
+		self.action_dim = cfg.action_dim
+		self.policy_type = cfg.policy.type
+		self.impedance_mode = cfg.policy.impedance_mode
+
+		# Updating action space based on impedance mode.
+		action_space_low = np.array([-1.0] * self.action_dim)
+		action_space_high = np.array([1.0] * self.action_dim)
+
+		# Add action dimension for scale factor, if necessary.
+		if self.impedance_mode == "variable":
+			action_space_low = np.concatenate(
+				[action_space_low, np.array([-1.0] * 2)]
+			)
+			action_space_high = np.concatenate(
+				[action_space_high, np.array([1.0] * 2)]
+			)
+		elif self.impedance_mode == "variable_kp":
+			action_space_low = np.concatenate(
+				[action_space_low, np.array([-1.0] * 1)]
+			)
+			action_space_high = np.concatenate(
+				[action_space_high, np.array([1.0] * 1)]
+			)
+
+		# Creating action and observation spaces
+		self.action_space = spaces.Box(
+			low=action_space_low,
+			high=action_space_high,
+			dtype=np.float32
+		 )
+		self.observation_space = env.observation_space
+	
+	def seed(self, seed=None):
+		if seed is not None:
+			np.random.seed(seed=seed)
+		else:
+			np.random.seed()
+	
+	def reset(self, **kwargs):
+		options = kwargs.get("options", {})
+		new_seed = options.get("seed", None)
+		if new_seed is not None:
+			self.seed(seed=new_seed)
+		return self.env.reset()
+
+	def step(self, action):
+		# Expand control parameters to robot joint dimensions, if necessary.
+		# TODO: eventually, this may need to read from a config rather than be hardcoded.
+		if self.impedance_mode == "variable":
+			damping, stiffness, delta = action[0], action[1], action[2:]
+			action = np.concatenate([
+				np.repeat(damping, 6),
+				np.repeat(stiffness, 6),
+				delta
+			], axis=0)
+		elif self.impedance_mode == "variable_kp":
+			stiffness, delta = action[0], action[1:]
+			action = np.concatenate([
+				np.repeat(stiffness, 6),
+				delta
+			], axis=0)
+			
+		return self.env.step(action)
+	
+	def render(self, **kwargs):
+		return self.env.render()
 
 class ObservationWrapperRobomimic(gym.Env):
 	def __init__(

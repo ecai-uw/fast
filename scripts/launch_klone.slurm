@@ -6,7 +6,6 @@
 #SBATCH --nodes=1
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --constraint="2080ti|a40|a100|l40|l40s|rtx6k|p100|titan|h200"
 #SBATCH --time=72:00:00
 #SBATCH --array=1-3
 #SBATCH --requeue

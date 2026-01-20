@@ -143,3 +143,7 @@ controller:
   impedance_mode: ${policy.impedance_mode} # fixed, variable, variable_kp
   kp: 150.0
   kp_limits: [0.0, 1500.0] # TODO: for now, the 1500 is hardcoded from the make_robomimic_env helper function.
+
+eval:
+  eval_base: False # Whether to eval the base policy alone.
+  save_video: True

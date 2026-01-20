@@ -240,39 +240,29 @@ class LoggingCallback(BaseCallback):
 
 				# -------------------------- ROLLOUT VISUALIZATION --------------------------
 				rollout_vid = np.array(rollout_vid)
-				rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
+				rollout_vid = rollout_vid.transpose(0, 3, 1, 2)  # T, C, H, W
+				# rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
 
-				# Computing predicted Q and V values for logged rollout.
-				obs_arr = np.array(obs_arr)
-				action_arr = np.array(action_arr)
-				# NOTE: this will treat rollout length as batch size.
-				pred_mean_qs = torch.cat(
-					agent.base_critic_value.forward_q(
-						torch.tensor(obs_arr, device=agent.device, dtype=torch.float32),
-						torch.tensor(action_arr, device=agent.device, dtype=torch.float32),
-					), dim=1
-				).mean(dim=1, keepdim=True).cpu().numpy()
-				pred_vs = agent.base_critic_value.forward_v(
-					torch.tensor(obs_arr, device=agent.device, dtype=torch.float32)
-				).cpu().numpy()
-				combined_frames = plot_data_with_frames(
-					rollout_vid_frames,
-					{"pred mean Q": pred_mean_qs, "pred V": pred_vs},
-					"Base Value Function Predictions",
-				)
-				combined_frames = np.stack([np.asarray(f) for f in combined_frames], axis=0)
-				combined_frames = combined_frames.transpose(0, 3, 1, 2)
-
-				# If policy logged scaled predictions, separately visualize these as well.
-				if len(scale_viz_arr) > 0:
-					scale_viz_arr = np.array(scale_viz_arr)
-					scale_viz_frames = plot_data_with_frames(
-						rollout_vid_frames,
-						{"scale pred": scale_viz_arr},
-						"Scale Predictions Over Rollout",
-					)
-					scale_viz_frames = np.stack([np.asarray(f) for f in scale_viz_frames], axis=0)
-					scale_viz_frames = scale_viz_frames.transpose(0, 3, 1, 2)
+				# # Computing predicted Q and V values for logged rollout.
+				# obs_arr = np.array(obs_arr)
+				# action_arr = np.array(action_arr)
+				# # NOTE: this will treat rollout length as batch size.
+				# pred_mean_qs = torch.cat(
+				# 	agent.base_critic_value.forward_q(
+				# 		torch.tensor(obs_arr, device=agent.device, dtype=torch.float32),
+				# 		torch.tensor(action_arr, device=agent.device, dtype=torch.float32),
+				# 	), dim=1
+				# ).mean(dim=1, keepdim=True).cpu().numpy()
+				# pred_vs = agent.base_critic_value.forward_v(
+				# 	torch.tensor(obs_arr, device=agent.device, dtype=torch.float32)
+				# ).cpu().numpy()
+				# combined_frames = plot_data_with_frames(
+				# 	rollout_vid_frames,
+				# 	{"pred mean Q": pred_mean_qs, "pred V": pred_vs},
+				# 	"Base Value Function Predictions",
+				# )
+				# combined_frames = np.stack([np.asarray(f) for f in combined_frames], axis=0)
+				# combined_frames = combined_frames.transpose(0, 3, 1, 2)
 				
 				# -------------------------- WANDB LOGGING --------------------------
 				if self.use_wandb:
@@ -299,20 +289,18 @@ class LoggingCallback(BaseCallback):
 					})
 					wandb.log(subgoal_log_dict, step=self.num_timesteps)
 
-					# TODO: CLEAN UP THE OBSOLETE METRICS/LOGS.
-
 					# Log rollout video.
 					with warnings.catch_warnings():
 						# NOTE: Suppressing warnings due to inconsistency between WandB and PIL.
 						warnings.simplefilter("ignore")
 						wandb.log({
-							f"{name}/rollout_vid": wandb.Video(combined_frames, fps=10, format="gif")
+							f"{name}/rollout_vid": wandb.Video(rollout_vid, fps=10, format="gif")
 						}, step=self.num_timesteps)
 
-						if len(scale_viz_arr) > 0:
-							wandb.log({
-								f"{name}/scale_viz_vid": wandb.Video(scale_viz_frames, fps=10, format="gif")
-							}, step=self.num_timesteps)
+						# if len(scale_viz_arr) > 0:
+						# 	wandb.log({
+						# 		f"{name}/scale_viz_vid": wandb.Video(scale_viz_frames, fps=10, format="gif")
+						# 	}, step=self.num_timesteps)
 
 	def set_timesteps(self, timesteps):
 		self.total_timesteps = timesteps
@@ -583,4 +571,81 @@ def plot_data_with_frames(frames, data_dict, title):
 		combined_img.paste(plt_img, (w, 0))
 		combined_frames.append(combined_img)
 
+	return combined_frames
+
+def flatten_wandb_cfg(wandb_cfg):
+	"""
+	Helper function to parse wandb config.
+	"""
+	if isinstance(wandb_cfg, dict):
+		if "value" in wandb_cfg.keys():
+			return wandb_cfg["value"]
+		else:
+			return {k: flatten_wandb_cfg(v) for k, v in wandb_cfg.items()}
+	return wandb_cfg
+
+def plot_metric_frames(data_dict, title, xlabel='Timestep', ylabel='Value', h=256, w=256):
+	"""
+	Plots a metric dictionary as an image and returns as PIL frames.
+	"""
+	num_frames = len(next(iter(data_dict.values())))
+	buf = io.BytesIO()
+	frames = []
+
+	for i in range(num_frames):
+		buf.truncate(0)
+		buf.seek(0)
+		plt.figure(figsize=(w / 100, h / 100), dpi=100)
+		plt.xlim(0, num_frames)
+
+		y_min = min([min(v[:i+1]) for v in data_dict.values()])
+		y_max = max([max(v[:i+1]) for v in data_dict.values()])
+		# Additionally filtering bounds to be at least -1 to 1.
+		plt.ylim(y_min - 0.1, y_max + 0.1)
+		plt.xlim(0, max(10, i + 1))
+
+		for label, data in data_dict.items():
+			plt.plot(data[:i+1], label=label)
+		plt.xlabel(xlabel)
+		plt.ylabel(ylabel)
+		plt.title(title)
+		plt.axhline(0, color='black', linestyle='--', linewidth=0.5)
+		plt.tight_layout()
+		plt.legend()
+
+		plt.savefig(buf, format='png')
+		plt.close()
+		buf.seek(0)
+
+		plt_img = Image.open(buf).copy().convert('RGB')
+		frames.append(plt_img)
+
+	return frames
+
+def plot_rollout_with_metrics(frames, metric_frames):
+	num_frames = len(frames)
+	total_subplots = 1 + len(metric_frames)
+
+	# plots per row is square root, ceilinged.
+	plots_per_row = int(np.ceil(np.sqrt(total_subplots)))
+	plots_per_col = int(np.ceil(total_subplots / plots_per_row))
+
+	combined_frames = []
+	for i in range(num_frames):
+		h = frames[0].height
+		w = frames[0].width
+
+		# Create a new image to hold the combined frame.
+		combined_img = Image.new('RGB', (w * plots_per_row, h * plots_per_col))
+
+		# Paste the main frame.
+		combined_img.paste(frames[i], (0, 0))
+
+		# Paste metric frames.
+		for j, metric_frame in enumerate(metric_frames):
+			row = (j + 1) // plots_per_row
+			col = (j + 1) % plots_per_row
+			combined_img.paste(metric_frame[i], (w * col, h * row))
+
+		combined_frames.append(combined_img)
 	return combined_frames

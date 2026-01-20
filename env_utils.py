@@ -72,9 +72,11 @@ class ResidualPolicyWrapper(gym.Env):
 		self,
 		env,
 		cfg,
+		full_render=False,
 	):
 		self.env = env
 		self.cfg = cfg
+		self.full_render = full_render
 		self.action_dim = cfg.action_dim
 		self.policy_type = cfg.policy.type
 		self.impedance_mode = cfg.policy.impedance_mode
@@ -137,7 +139,10 @@ class ResidualPolicyWrapper(gym.Env):
 				delta
 			], axis=0)
 			
-		return self.env.step(action)
+		obs, reward, done, info = self.env.step(action)
+		if self.full_render:
+			info['render'] = self.env.render()
+		return obs, reward, done, info
 	
 	def render(self, **kwargs):
 		return self.env.render()
@@ -319,7 +324,6 @@ class DiffusionPolicyEnvWrapper(VecEnvWrapper):
 		self.obs = torch.tensor(obs, device=self.device, dtype=torch.float32)
 		obs_out = self.obs
 		return obs_out.detach().cpu().numpy()
-
 
 class LiftEvalWrapper(ObservationWrapperRobomimic):
 	def __init__(self, env, reward_offset=1):

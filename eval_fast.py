@@ -108,6 +108,7 @@ def main(cfg: OmegaConf):
                 low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, 
                 dppo_path=cfg.dppo_path,
                 impedance_mode=cfg.policy.impedance_mode,
+                control_obs=cfg.env.control_obs,
             )
             env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset)
         env = ResidualPolicyWrapper(env, cfg, full_render=True)
@@ -218,11 +219,6 @@ def main(cfg: OmegaConf):
 
     with torch.no_grad():
         # Initializing rollout visualization data.
-        # rollout_frames = []
-        # rollout_deltas = []
-        # rollout_stiffness = []
-        # rollout_damping = []
-
         rollout_frames_unchunked = []
         rollout_deltas_unchunked = []
         rollout_stiffness_unchunked = []
@@ -251,13 +247,7 @@ def main(cfg: OmegaConf):
                 # TODO: PICK UP FROM HERE, PARSE FULL RENDERS TO GET CHUNK-UNROLLED VIDEOS
 
                 if i == 0:
-                    # TODO: eventually, unroll the action chunk
-                    # rollout_frames.append(eval_env.env_method('render'))
-                    # rollout_deltas.append(np.array([info_dict["delta"] for info_dict in info]))
-                    # rollout_damping.append(np.array([info_dict["damping"] for info_dict in info]))
-                    # rollout_stiffness.append(np.array([info_dict["stiffness"] for info_dict in info]))
-
-                    # UNROLLING THE CHUNKS HERE
+                    # Saving rollout profile metrics for visualization.
                     rollout_frames_unchunked.append([
                         np.array([info[env_i]["chunk_info"][t]["render"] for t in range(model.diffusion_act_chunk)])
                         for env_i in range(num_env_eval)

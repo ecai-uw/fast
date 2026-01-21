@@ -310,11 +310,12 @@ class LoggingCallback(BaseCallback):
 def collect_initial_rollouts(model, env, num_steps, base_policy, cfg):
 	obs = env.reset()
 	for i in tqdm(range(num_steps)):
-		noise = torch.randn(cfg.env.n_envs, cfg.act_steps, cfg.action_dim).to(device=cfg.device)
-		action = base_policy(torch.tensor(obs, device=cfg.device, dtype=torch.float32), noise)
-		action = action.reshape(-1, cfg.act_steps * cfg.action_dim)
-		if model.policy_impedance_mode != "fixed":
-			action = model.augment_controller_action(action)
+		# noise = torch.randn(cfg.env.n_envs, cfg.act_steps, cfg.action_dim).to(device=cfg.device)
+		# action = base_policy(torch.tensor(obs, device=cfg.device, dtype=torch.float32), noise)
+		# action = action.reshape(-1, cfg.act_steps * cfg.action_dim)
+		# if model.policy_impedance_mode != "fixed":
+		# 	action = model.augment_controller_action(action)
+		action = model.sample_base_policy(obs, return_numpy=True)
 
 		# Add initial rollout noise for better coverage, if necessary.
 		# NOTE: consider adding noise before augmenting controller action?
@@ -357,6 +358,12 @@ def load_offline_data(model, offline_data_path, n_env, chunk_size, reward_offset
 	# Depending on policy/env impedance mode, augment actions based on controller config.
 	if model.policy_impedance_mode != "fixed":
 		actions = model.augment_controller_action(actions)
+
+	# Adding default controller params to observations, if necessary.
+	if model.control_obs:
+		control_obs = np.zeros((obs.shape[0], 2))
+		obs = np.concatenate([obs, control_obs], axis=-1)
+		next_obs = np.concatenate([next_obs, control_obs], axis=-1)
 
 	for i in range(int(obs.shape[0]/n_env)):
 		model.replay_buffer.add(

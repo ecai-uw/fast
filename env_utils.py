@@ -22,12 +22,14 @@ def make_robomimic_env(
 	low_dim_keys=None, 
 	dppo_path=None,
 	impedance_mode='fixed',
+	control_obs=False,
 ):
 	wrappers = OmegaConf.create({
 		'robomimic_lowdim': {
 			'normalization_path': normalization_path,
 			'low_dim_keys': low_dim_keys,
 			'impedance_mode': impedance_mode,
+			'control_obs': control_obs,
 		},
 	})
 	obs_modality_dict = {
@@ -240,9 +242,16 @@ class ActionChunkWrapper(gymnasium.Env):
 			high=np.tile(env.action_space.high, cfg.act_steps),
 			dtype=np.float32
 		)
+		# self.observation_space = spaces.Box(
+		# 	low=-np.ones(cfg.obs_dim),
+		# 	high=np.ones(cfg.obs_dim),
+		# 	dtype=np.float32
+		# )
+		# TODO: need to manually make this, becuase sb3 buffer requries np.float32
+		# self.observation_space = self.env.observation_space["state"]
 		self.observation_space = spaces.Box(
-			low=-np.ones(cfg.obs_dim),
-			high=np.ones(cfg.obs_dim),
+			low=self.env.observation_space["state"].low,
+			high=self.env.observation_space["state"].high,
 			dtype=np.float32
 		)
 		self.count = 0

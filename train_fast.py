@@ -122,6 +122,7 @@ def main(cfg: OmegaConf):
                 low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, 
                 dppo_path=cfg.dppo_path,
                 impedance_mode=cfg.policy.impedance_mode,
+                control_obs=cfg.env.control_obs,
             )
             # env = ObservationWrapperRobomimic(env, reward_offset=cfg.env.reward_offset)
             env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset)
@@ -130,6 +131,7 @@ def main(cfg: OmegaConf):
         return env
 
     # env = make_env()
+    # obs = env.reset()
     # breakpoint()
 
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)
@@ -274,7 +276,7 @@ def main(cfg: OmegaConf):
     model.learn(
         total_timesteps = total_timesteps,
         callback = callbacks,
-        progress_bar = True,
+        progress_bar = False,
         reset_num_timesteps = not cfg.resume,
     )
 

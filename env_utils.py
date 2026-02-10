@@ -406,13 +406,59 @@ class CanEvalWrapper(ObservationWrapperRobomimic):
 			
 		return obs, reward, done, info
 
+class SquareEvalWrapper(ObservationWrapperRobomimic):
+	def __init__(self, env, reward_offset=1):
+		super().__init__(env, reward_offset=reward_offset)
+		self.subgoals = ['reach', 'grasp', 'hover', 'success']
+
+	# only overriding step to extract subgoal information
+	def step(self, action):
+		raw_obs, reward, done, info = self.env.step(action)
+		reward = (reward - self.reward_offset)
+		obs = raw_obs['state'].flatten()
+
+		square_env = self.env.env.env
+		nut_obj = square_env.nuts[square_env.nut_id]
+
+		# Check reach
+		dist = square_env._gripper_to_target(
+			gripper=square_env.robots[0].gripper,
+			target=nut_obj.important_sites["handle"],
+			target_type="site",
+			return_distance=True,
+		)
+		reach = dist < 0.05
+
+		# Check grasp
+		grasp = square_env._check_grasp(
+			gripper=square_env.robots[0].gripper, object_geoms=nut_obj
+		)
+
+		# Check hover - assuming square nut to square peg.
+		peg_pos = np.array(square_env.sim.data.body_xpos[square_env.peg1_body_id])
+		nut_pos = np.array(square_env.sim.data.body_xpos[square_env.obj_body_id[nut_obj.name]])
+		# for now, just check x and y distance
+		hover = np.linalg.norm(peg_pos[:2] - nut_pos[:2]) < 0.05
+
+		# Check success
+		success = square_env._check_success()
+
+		info['reach'] = reach
+		info['grasp'] = grasp
+		info['hover'] = hover
+		info['success'] = success
+
+		return obs, reward, done, info
+		
 
 eval_wrapper_dict = {
 	'lift': LiftEvalWrapper,
 	'can': CanEvalWrapper,
+	'square': SquareEvalWrapper,
 }
 
 subgoal_list_dict = {
 	'lift': ['reach', 'grasp', 'success'],
 	'can': ['reach', 'grasp', 'hover', 'success'],
+	'square': ['reach', 'grasp', 'hover', 'success'],
 }

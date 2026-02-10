@@ -7,10 +7,13 @@ hydra:
 name: robomimic_can_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
-base_policy_path: ./dppo/log/robomimic-pretrain/can/can_pre_diffusion_mlp_ta4_td20/2024-06-28_13-29-54/checkpoint/state_5000.pt
-offline_data_path: ./dppo/data/robomimic/can/train.npz
 dppo_path: ./dppo
-normalization_path: ./dppo/log/robomimic/${env_name}/normalization.npz
+# base_policy_path: ./dppo/log/robomimic-pretrain/can/can_pre_diffusion_mlp_ta4_td20/2024-06-28_13-29-54/checkpoint/state_5000.pt
+# offline_data_path: ./dppo/data/robomimic/can/train.npz
+# normalization_path: ./dppo/data/robomimic/can/normalization.npz
+base_policy_path: ./dppo/log/robomimic-pretrain/can/can_pre_diffusion_mlp_ta4_td20/multi-human/checkpoint/state_3000.pt
+offline_data_path: ./dppo/data/robomimic/can/train.npz
+normalization_path: ./dppo/data/robomimic/can/normalization.npz
 
 use_wandb: True # Kind of legacy parameter, eventually just remove this and always use wandb.
 resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
@@ -33,7 +36,8 @@ action_dim: 7 # this is base action dim!
 cond_steps: 1
 act_steps: 4 # action chunk size of base policy
 load_offline_data: True # if true, load offline demonstration data into replay buffer
-deterministic_eval: False # if true, run eval with both deterministic actions, as well as stochastic
+deterministic_eval: True # if true, run eval with both deterministic actions, as well as stochastic
+debug_gradients: False # if true, log gradient norms and values for debugging
 
 total_timesteps: 200000
 eval_interval: 500
@@ -67,19 +71,23 @@ env:
     robot0_eef_quat: 4
     robot0_gripper_qpos: 2
     object: 14
-  control_obs: True # Whether to include controller state in observation.
+  control_obs: False # Whether to include controller state in observation.
+  average_base_horizon: 44.67 # Average success time of base policy - used for JSRL.
 
 policy:
   type: residual # residual, residual_scale, residual_force, residual_scale2, residual_force2
   impedance_mode: fixed # fixed, variable, variable_kp
+  gains_only: False # Whether to only predict gains (for variable impedance modes).
   smooth_gain_lambda: 0.0 # Weight for action smoothing loss.
   action_condition: True # Whether to condition policy on base action.
   shape_rewards: False # Whether to use PBRS from base policy values.
   base_gradient_steps: 0 # Number of gradient steps to take on base critic/value per update. If -1, same as utd. If 0, no updates.
   residual_mag_schedule: 50000 # Schedule for clamping residual actions.
   residual_mag: 0.2 # Max. magnitude to clamp residual predictions.
+  gains_mag: 0.2 # Max. magnitude to clamp gain residuals.
   # residual_sample_schedule: ... # Frequency of sampling residual actions during training.
   drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
+  jumpstart: False # Whether to roll-in the base policy.
 
 train:
   tau: 0.005 # Target update rate
@@ -98,6 +106,7 @@ train:
   # action_magnitude: 1.5 # Maximum action magnitude in noise action space
   n_critics: 2 # Number of critic Q networks
   critic_backup_combine_type: min
+  grad_clip_norm: 1.0 # Gradient clipping norm, or null for no clipping
 
 base:
   tau: 0.005 # Target update rate
@@ -134,9 +143,9 @@ model:
   action_dim: ${action_dim}
   denoising_steps: 20
   device: ${device}
-  use_ddim: True
-  ddim_steps: 8
-  controllable_noise: True
+  # use_ddim: True
+  # ddim_steps: 8
+  # controllable_noise: True
 
 # TODO: Controller parameters - these are manually hardcoded/copied for now.
 controller:

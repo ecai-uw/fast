@@ -63,7 +63,7 @@ def main(cfg: OmegaConf):
         # ...run id must already be specified.
         assert cfg.wandb.id is not None, "Must provide wandb run id to resume from."
         # Manually set run_dir to match previous run.
-        cfg.run_dir = os.path.join(cfg.log_dir, cfg.wandb.id)
+        cfg.run_dir = os.path.join(cfg.log_dir, str(cfg.wandb.id))
 
         # Ensure that run_dir exists.
         if not os.path.exists(cfg.run_dir):
@@ -116,6 +116,7 @@ def main(cfg: OmegaConf):
         return env
 
     # env = make_env()
+    # env.step(np.array([0, 0, 0, 0, 0, 0, 0, 0, 0] * 4))  # test step
     # breakpoint()
 
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)
@@ -183,9 +184,9 @@ def main(cfg: OmegaConf):
             diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
             critic_backup_combine_type=cfg.train.critic_backup_combine_type,
             base_gamma=cfg.base.discount,
-            base_gradient_steps=cfg.policy.base_gradient_steps,
-            policy_action_condition=cfg.policy.action_condition,
-            shape_rewards=cfg.policy.shape_rewards,
+            # base_gradient_steps=cfg.policy.base_gradient_steps,
+            # policy_action_condition=cfg.policy.action_condition,
+            # shape_rewards=cfg.policy.shape_rewards,
             cfg=cfg,
         )
 
@@ -223,6 +224,8 @@ def main(cfg: OmegaConf):
         rollout_deltas_unchunked = []
         rollout_stiffness_unchunked = []
         rollout_damping_unchunked = []
+        rollout_ee_forces_unchunked = []
+        rollout_ee_torques_unchunked = []
 
         # Initializing aggregated evaluation metrics.
         delta_action_norms = np.zeros((eval_episodes, num_env_eval))
@@ -244,7 +247,6 @@ def main(cfg: OmegaConf):
                     obs, deterministic=cfg.deterministic_eval, sample_base=sample_base
                 )
                 next_obs, reward, done, info = eval_env.step(action)
-                # TODO: PICK UP FROM HERE, PARSE FULL RENDERS TO GET CHUNK-UNROLLED VIDEOS
 
                 if i == 0:
                     # Saving rollout profile metrics for visualization.
@@ -262,6 +264,14 @@ def main(cfg: OmegaConf):
                     ])
                     rollout_stiffness_unchunked.append([
                         np.array([info[env_i]["chunk_info"][t]["stiffness"] for t in range(model.diffusion_act_chunk)])
+                        for env_i in range(num_env_eval)
+                    ])
+                    rollout_ee_forces_unchunked.append([
+                        np.array([info[env_i]["chunk_info"][t]["ee_force"] for t in range(model.diffusion_act_chunk)])
+                        for env_i in range(num_env_eval)
+                    ])
+                    rollout_ee_torques_unchunked.append([
+                        np.array([info[env_i]["chunk_info"][t]["ee_torque"] for t in range(model.diffusion_act_chunk)])
                         for env_i in range(num_env_eval)
                     ])
 
@@ -343,6 +353,24 @@ def main(cfg: OmegaConf):
                 rollout_deltas_unchunked[..., :3], axis=-1
             )
 
+            rollout_ee_force_unchunked = np.linalg.norm(
+                np.concatenate(rollout_ee_forces_unchunked, axis=1),
+                axis=-1
+            )
+            rollout_ee_torques_unchunked = np.linalg.norm(
+                np.concatenate(rollout_ee_torques_unchunked, axis=1),
+                axis=-1
+            )
+
+            # Grabbing subgoal times for vertical plot lines.
+            rollout_subgoal_times = {
+                k: v[0] * model.diffusion_act_chunk for k, v in subgoal_time_arrs.items()
+            }
+
+            # Make sure at least one success is plotted, if there is at least one.
+            successes_plotted = 0
+            failures_plotted = 0
+
             for env_i in tqdm(range(num_env_eval)):
                 # rollout_frames_i = rollout_frames[:, env_i, ...]
                 rollout_frames_unchunked_i = rollout_frames_unchunked[env_i, ...]
@@ -359,26 +387,54 @@ def main(cfg: OmegaConf):
                     duration=25 * model.diffusion_act_chunk,
                 )
 
-                # Only plot metrics for first few envs to save time.
-                if env_i >= 2:
+                # Only plot metrics for first few envs to save time - always plot successes.
+                # if env_i >= 2 and success_tag == "fail":
+                if env_i >= 2 and not (successes_plotted == 0 and success_tag == "success") and not (failures_plotted == 0 and success_tag == "fail"):
                     continue
-                
+                if success_tag == "success":
+                    successes_plotted += 1
+                else:
+                    failures_plotted += 1
+
                 rollout_vid_frames_unchunked_i = [Image.fromarray(f) for f in rollout_frames_unchunked[env_i, ...]]
+                rollout_subgoal_times_i = {
+                    k: v[env_i] for k, v in rollout_subgoal_times.items()
+                }
                 # Plotting metrics across rollouts.
                 delta_pos_i_plots = plot_metric_frames(
-                    {"delta": rollout_delta_pos_norms_unchunked[env_i, ...]},
+                    data_dict={"delta": rollout_delta_pos_norms_unchunked[env_i, ...]},
+                    subgoal_dict=rollout_subgoal_times_i,
                     title=f"Rollout Delta Positions",
                 )
                 damping_i_plots = plot_metric_frames(
                     {"damping": rollout_damping_unchunked[env_i, ...]},
+                    subgoal_dict=rollout_subgoal_times_i,
                     title=f"Rollout Damping",
                 )
                 stiffness_i_plots = plot_metric_frames(
                     {"stiffness": rollout_stiffness_unchunked[env_i, ...]},
+                    subgoal_dict=rollout_subgoal_times_i,
                     title=f"Rollout Stiffness",
                 )
+                ee_force_i_plots = plot_metric_frames(
+                    {"ee_force": rollout_ee_force_unchunked[env_i, ...]},
+                    subgoal_dict=rollout_subgoal_times_i,
+                    title=f"Rollout EE Force",
+                )
+                ee_torque_i_plots = plot_metric_frames(
+                    {"ee_torque": rollout_ee_torques_unchunked[env_i, ...]},
+                    subgoal_dict=rollout_subgoal_times_i,
+                    title=f"Rollout EE Torque",
+                )
 
-                rollout_metric_frames_i = plot_rollout_with_metrics(rollout_vid_frames_unchunked_i, [delta_pos_i_plots, damping_i_plots, stiffness_i_plots])
+                metric_plot_list = [
+                    delta_pos_i_plots,
+                    damping_i_plots,
+                    stiffness_i_plots,
+                    ee_force_i_plots,
+                    ee_torque_i_plots,
+                ]
+                rollout_metric_frames_i = plot_rollout_with_metrics(rollout_vid_frames_unchunked_i, metric_plot_list)
                 rollout_metric_frames_i[0].save(
                     f"{log_dir}/rollout_{tag}_metrics.gif",
                     save_all=True,

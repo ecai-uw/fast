@@ -41,7 +41,8 @@ def load_base_policy(cfg):
 
 
 class LoggingCallback(BaseCallback):
-	def __init__(self, 
+	def __init__(self,
+		cfg,
 		action_chunk=4, 
 		log_freq=1000,
 		use_wandb=True, 
@@ -58,6 +59,7 @@ class LoggingCallback(BaseCallback):
 		subgoal_list=["success"],
 	):
 		super().__init__(verbose)
+		self.cfg = cfg
 		self.action_chunk = action_chunk
 		self.log_freq = log_freq
 		self.episode_rewards = []
@@ -106,6 +108,21 @@ class LoggingCallback(BaseCallback):
 						"train/critic_loss": self.locals['self'].logger.name_to_value['train/critic_loss'],
 						"train/ent_coef_loss": self.locals['self'].logger.name_to_value['train/ent_coef_loss'],
 					}, step=self.num_timesteps)
+					# Logging gain losses, if necessary.
+					if self.cfg.policy.impedance_mode != "fixed" and self.cfg.policy.smooth_gain_lambda > 0:
+						wandb.log({
+							"train/smooth_gain_loss": self.locals['self'].logger.name_to_value['train/smooth_gain_loss'],
+						})
+					# Logging gradient norms for debugging, if necessary.
+					if 'debug/actor_grad_norm' in self.locals['self'].logger.name_to_value:
+						wandb.log({
+							"train/actor_grad_norm": self.locals['self'].logger.name_to_value['debug/actor_grad_norm'],
+						})
+					if 'debug/smooth_gain_grad_norm' in self.locals['self'].logger.name_to_value:
+						wandb.log({
+							"train/smooth_gain_grad_norm": self.locals['self'].logger.name_to_value['debug/smooth_gain_grad_norm'],
+						})
+
 					if np.sum(self.episode_completed) > 0:
 						wandb.log({
 							"train/success_rate": np.sum(self.episode_success) / np.sum(self.episode_completed),
@@ -152,6 +169,7 @@ class LoggingCallback(BaseCallback):
 
 				for i in range(self.eval_episodes):
 					obs = env.reset()
+					action_arr_i = [] 
 					obs_arr_i = []
 					r = []
 					delta_action_norms_i = []
@@ -164,6 +182,7 @@ class LoggingCallback(BaseCallback):
 						action, predict_second_return = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
 						next_obs, reward, done, info = env.step(action)
 
+						action_arr_i.append(action)
 						obs_arr_i.append(obs)
 						# Logging, if necessary
 						if i == 0:
@@ -212,11 +231,19 @@ class LoggingCallback(BaseCallback):
 					# Computing shaped rewards with obs - next_obs pairs.
 					# TODO: WARNING: this is technically diffeent from how environment returns are aggregated.
 					# TODO: WARNING: if this discrepancy emerges later, need to also track 'dones' to ensure consistency.
+					action_arr_i = np.array(action_arr_i)
 					obs_arr_i = np.array(obs_arr_i)
-					for o, o_next in zip(obs_arr_i[:-1], obs_arr_i[1:]):
+					# for o, o_next in zip(obs_arr_i[:-1], obs_arr_i[1:]):
+					# 	# shaped_reward = agent.get_shaped_rewards(
+					# 	# 	torch.tensor(o, device=agent.device, dtype=torch.float32),
+					# 	# 	torch.tensor(o_next, device=agent.device, dtype=torch.float32),
+					# 	# )
+					# 	# shaped_rew_ep += shaped_reward.cpu().numpy().reshape(-1)
+					# 	shaped_rew_ep = [0]
+					for a, o in zip(action_arr_i, obs_arr_i):
 						shaped_reward = agent.get_shaped_rewards(
+							torch.tensor(a, device=agent.device, dtype=torch.float32),
 							torch.tensor(o, device=agent.device, dtype=torch.float32),
-							torch.tensor(o_next, device=agent.device, dtype=torch.float32),
 						)
 						shaped_rew_ep += shaped_reward.cpu().numpy().reshape(-1)
 					shaped_rew_total += sum(shaped_rew_ep)				
@@ -591,11 +618,14 @@ def flatten_wandb_cfg(wandb_cfg):
 			return {k: flatten_wandb_cfg(v) for k, v in wandb_cfg.items()}
 	return wandb_cfg
 
-def plot_metric_frames(data_dict, title, xlabel='Timestep', ylabel='Value', h=256, w=256):
+def plot_metric_frames(data_dict, subgoal_dict, title, xlabel='Timestep', ylabel='Value', h=256, w=256):
 	"""
 	Plots a metric dictionary as an image and returns as PIL frames.
 	"""
 	num_frames = len(next(iter(data_dict.values())))
+	final_subgoal_time = max(subgoal_dict.values())
+	# Cutting off frames after success.
+	num_frames = int(min(num_frames, final_subgoal_time + 10))
 	buf = io.BytesIO()
 	frames = []
 
@@ -613,12 +643,32 @@ def plot_metric_frames(data_dict, title, xlabel='Timestep', ylabel='Value', h=25
 
 		for label, data in data_dict.items():
 			plt.plot(data[:i+1], label=label)
+
+		# Plotting vertical subgoal lines.
+		# if i >= vert_line_x:
+		# 	plt.axvline(x=vert_line_x, color='red', linestyle='--', linewidth=0.5)
+		for subgoal, time in subgoal_dict.items():
+			if i >= time:
+				ax = plt.gca()
+				ax.axvline(x=time, linestyle='--', linewidth=1.5, color='red')
+				# ax.set_xticks([time], minor=True)
+				# ax.set_xticklabels([subgoal], minor=True)
+				ax.text(
+					time + 0.5, 
+					# y_max - 0.1 * (y_max - y_min), 
+					y_max,
+					subgoal[0].upper(), 
+					rotation=0, 
+					color='red', 
+					fontsize=12
+				)
+
 		plt.xlabel(xlabel)
 		plt.ylabel(ylabel)
 		plt.title(title)
 		plt.axhline(0, color='black', linestyle='--', linewidth=0.5)
 		plt.tight_layout()
-		plt.legend()
+		# plt.legend()
 
 		plt.savefig(buf, format='png')
 		plt.close()
@@ -630,10 +680,12 @@ def plot_metric_frames(data_dict, title, xlabel='Timestep', ylabel='Value', h=25
 	return frames
 
 def plot_rollout_with_metrics(frames, metric_frames):
-	num_frames = len(frames)
+	# TODO: THIS ALSO NEEDS TO GRAB MAX LENGTH FRO MMETRIC FRAMES!
+	num_frames = len(metric_frames[0])
+	# TODO: ASSERT ALL METRIC FRAMES HAVE SAME LENGTH.
 	total_subplots = 1 + len(metric_frames)
 
-	# plots per row is square root, ceilinged.
+	# plots per row is square root, ceiling-ed.
 	plots_per_row = int(np.ceil(np.sqrt(total_subplots)))
 	plots_per_col = int(np.ceil(total_subplots / plots_per_row))
 
@@ -655,4 +707,8 @@ def plot_rollout_with_metrics(frames, metric_frames):
 			combined_img.paste(metric_frame[i], (w * col, h * row))
 
 		combined_frames.append(combined_img)
+	
+	# Add the last frame 20 times for better visibility.
+	for _ in range(40):
+		combined_frames.append(combined_frames[-1])
 	return combined_frames

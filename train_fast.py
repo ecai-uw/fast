@@ -131,7 +131,6 @@ def main(cfg: OmegaConf):
         return env
 
     # env = make_env()
-    # obs = env.reset()
     # breakpoint()
 
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)
@@ -196,7 +195,6 @@ def main(cfg: OmegaConf):
             tensorboard_log=None, # Disabling tensorboard logging, since we use WandB.
             verbose=1,
             policy_kwargs=policy_kwargs,
-            # diffusion_policy=base_policy,
             diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
             critic_backup_combine_type=cfg.train.critic_backup_combine_type,
             base_gamma=cfg.base.discount,
@@ -226,6 +224,7 @@ def main(cfg: OmegaConf):
     eval_env.seed(cfg.seed + num_env + 1) 
 
     logging_callback = LoggingCallback(
+        cfg = cfg,
         action_chunk = cfg.act_steps, 
         eval_episodes = int(cfg.num_evals / num_env_eval), 
         log_freq=MAX_STEPS, 
@@ -256,15 +255,16 @@ def main(cfg: OmegaConf):
             logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
 
         # ...and train base Q and V functions.
-        model.train_base_value(
-            fqe_steps=cfg.base.fqe_steps,
-            vd_steps=cfg.base.vd_steps,
-            batch_size=cfg.base.batch_size,
-            vd_samples=cfg.base.vd_samples,
-            pre_train=True,
-            replay_data=None,
-            # lr_scheduler=cfg.base.lr_scheduler,
-        )
+        # SKIPPING THIS FOR NOW.
+        # model.train_base_value(
+        #     fqe_steps=cfg.base.fqe_steps,
+        #     vd_steps=cfg.base.vd_steps,
+        #     batch_size=cfg.base.batch_size,
+        #     vd_samples=cfg.base.vd_samples,
+        #     pre_train=True,
+        #     replay_data=None,
+        #     # lr_scheduler=cfg.base.lr_scheduler,
+        # )
 
     # Train the agent.
     callbacks = [checkpoint_callback, logging_callback]

@@ -294,6 +294,9 @@ class ActionChunkWrapper(gymnasium.Env):
 	def close(self):
 		return
 	
+	def get_step_count(self):
+		return self.count
+	
 
 class DiffusionPolicyEnvWrapper(VecEnvWrapper):
 	def __init__(self, env, cfg, base_policy):

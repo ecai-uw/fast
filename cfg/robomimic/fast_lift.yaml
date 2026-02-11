@@ -88,6 +88,7 @@ policy:
   # residual_sample_schedule: ... # Frequency of sampling residual actions during training.
   drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
   jumpstart: False # Whether to roll-in the base policy.
+  jumpstart2: False # Whether to roll-in the base policy (implementation 2).
 
 train:
   tau: 0.005 # Target update rate
@@ -106,6 +107,7 @@ train:
   # action_magnitude: 1.5 # Maximum action magnitude in noise action space
   n_critics: 2 # Number of critic Q networks
   critic_backup_combine_type: min
+  grad_clip_norm: 1.0 # Gradient clipping norm, or null for no clipping
 
 base:
   tau: 0.005 # Target update rate

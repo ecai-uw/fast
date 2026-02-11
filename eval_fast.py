@@ -200,9 +200,6 @@ def main(cfg: OmegaConf):
     eval_env.seed(cfg.seed + num_env + 1)
 
     # Run evaluation rollouts.
-    # scale = 0.0
-    # damping = 0.1
-    # kp = 150
     save_video = eval_cfg.save_video and (cfg.seed == 1)
     sample_base = eval_cfg.eval_base
     subgoal_list = subgoal_list_dict[cfg.env_name]
@@ -210,11 +207,6 @@ def main(cfg: OmegaConf):
 
     # Only save video when seed = 1
     log_dir = os.path.join(cfg.run_dir, "videos")
-    # log_dir = f"debug/fast/{cfg.env.name}"
-    # log_dir += f"/scale={scale}"
-    # log_dir += f"/kp={kp}_damping={damping}"
-    # if cfg.resume:
-    #     log_dir += f"_resume={cfg.wandb.id}"
     os.makedirs(log_dir, exist_ok=True)
 
 

@@ -29,7 +29,13 @@ from env_utils import (
     eval_wrapper_dict,
     subgoal_list_dict,
 )
-from utils import load_base_policy, load_offline_data, collect_initial_rollouts, LoggingCallback, visualize_base_value
+from utils import (
+    load_base_policy, 
+    load_offline_data, 
+    collect_initial_rollouts, 
+    LoggingCallback, 
+    visualize_base_value,
+)
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 OmegaConf.register_new_resolver("round_up", math.ceil)

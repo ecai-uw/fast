@@ -83,6 +83,35 @@ class LoggingCallback(BaseCallback):
 
 		assert "success" in self.subgoal_list, "Success check must be in subgoal list for logging."
 
+		# TODO: some hacky jumpstart logging logic for now
+		if "jumpstart" in self.cfg.policy:
+				self.jumpstart = self.cfg.policy.jumpstart
+		else:
+			self.jumpstart = False
+
+		if "jumpstart2" in self.cfg.policy and self.cfg.policy.jumpstart2 == "curriculum":
+			self.jumpstart2 = self.cfg.policy.jumpstart2
+			self.jumpstart_performance_buffer = []
+			self.jumpstart_beta = self.cfg.policy.jumpstart_beta
+			self.jumpstart_ma = self.cfg.policy.jumpstart_ma
+		else:
+			self.jumpstart2 = None
+			self.jumpstart_performance_buffer = []
+			self.jumpstart_beta = 0.05
+			self.jumpstart_ma = 3
+		
+		if self.jumpstart2 is not None:
+			self.jumpstart = False
+		
+		if self.jumpstart or self.jumpstart2 == "curriculum":
+			# Load base policy stats.
+			base_stats = np.loadtxt(self.cfg.base_stats_path, dtype=float)
+			self.base_avg_horizon = base_stats[0]
+			self.base_avg_success_rate = base_stats[1]
+		else:
+			self.base_avg_horizon = None
+			self.base_avg_success_rate = None	
+
 	def _on_step(self):
 		for info in self.locals['infos']:
 			if 'episode' in info:
@@ -265,31 +294,26 @@ class LoggingCallback(BaseCallback):
 					avg_rew = 0
 					avg_shaped_rew = 0
 
+				# TODO: handling jumpstart logic here
+				jumpstart_stage = agent.jumpstart_stage
+				jumpstart_n = agent.jumpstart_n
+				if self.jumpstart2 == "curriculum":
+					# Updating jumpstart performance buffer and stage, if necessary.
+					self.jumpstart_performance_buffer.append(subgoal_rate_arrs["success"])
+					if len(self.jumpstart_performance_buffer) > self.jumpstart_ma:
+						self.jumpstart_performance_buffer.pop(0)
+						ma_success_rate = np.mean(self.jumpstart_performance_buffer)
+					elif len(self.jumpstart_performance_buffer) == self.jumpstart_ma:
+						ma_success_rate = np.mean(self.jumpstart_performance_buffer)
+					else:
+						ma_success_rate = 0
+					# If success rate exceeds threshold, increase jumpstart stage.
+					if ma_success_rate > (1.0 - self.jumpstart_beta) * self.base_avg_success_rate and jumpstart_stage < jumpstart_n:
+						agent.jumpstart_stage += 1
+
 				# -------------------------- ROLLOUT VISUALIZATION --------------------------
 				rollout_vid = np.array(rollout_vid)
 				rollout_vid = rollout_vid.transpose(0, 3, 1, 2)  # T, C, H, W
-				# rollout_vid_frames = [Image.fromarray(f) for f in rollout_vid]
-
-				# # Computing predicted Q and V values for logged rollout.
-				# obs_arr = np.array(obs_arr)
-				# action_arr = np.array(action_arr)
-				# # NOTE: this will treat rollout length as batch size.
-				# pred_mean_qs = torch.cat(
-				# 	agent.base_critic_value.forward_q(
-				# 		torch.tensor(obs_arr, device=agent.device, dtype=torch.float32),
-				# 		torch.tensor(action_arr, device=agent.device, dtype=torch.float32),
-				# 	), dim=1
-				# ).mean(dim=1, keepdim=True).cpu().numpy()
-				# pred_vs = agent.base_critic_value.forward_v(
-				# 	torch.tensor(obs_arr, device=agent.device, dtype=torch.float32)
-				# ).cpu().numpy()
-				# combined_frames = plot_data_with_frames(
-				# 	rollout_vid_frames,
-				# 	{"pred mean Q": pred_mean_qs, "pred V": pred_vs},
-				# 	"Base Value Function Predictions",
-				# )
-				# combined_frames = np.stack([np.asarray(f) for f in combined_frames], axis=0)
-				# combined_frames = combined_frames.transpose(0, 3, 1, 2)
 				
 				# -------------------------- WANDB LOGGING --------------------------
 				if self.use_wandb:
@@ -316,6 +340,13 @@ class LoggingCallback(BaseCallback):
 					})
 					wandb.log(subgoal_log_dict, step=self.num_timesteps)
 
+					# TODO: handle jumpstart logic here
+					if self.jumpstart2 == "curriculum":
+						wandb.log({
+							f"{name}/jumpstart_stage": agent.jumpstart_stage,
+							f"{name}/jumpstart_ma_success_rate": ma_success_rate,
+						}, step=self.num_timesteps)
+						
 					# Log rollout video.
 					with warnings.catch_warnings():
 						# NOTE: Suppressing warnings due to inconsistency between WandB and PIL.

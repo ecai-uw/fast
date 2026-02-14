@@ -88,8 +88,7 @@ policy:
   gains_mag: 0.2 # Max. magnitude to clamp gain residuals.
   # residual_sample_schedule: ... # Frequency of sampling residual actions during training.
   drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
-  jumpstart: False # Whether to roll-in the base policy.
-  jumpstart2: null # (null, random, curriculum) Whether to roll-in the base policy (implementation 2).
+  jumpstart: null # (null, random, curriculum) Whether to roll-in the base policy (implementation 2).
   jumpstart_n: 10 # Number of curriculum stages.
   jumpstart_beta: 0.05 # Tolerance threshold for jumpstart curriculum.
   jumpstart_ma: 3 # Moving average window size for jumpstart curriculum success rate.

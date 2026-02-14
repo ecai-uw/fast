@@ -220,6 +220,10 @@ def main(cfg: OmegaConf):
         rollout_ee_torques_unchunked = []
 
         # Initializing aggregated evaluation metrics.
+        # ee_force_arrs = np.zeros((eval_episodes, num_env_eval, cfg.env.max_episode_steps, 3))
+        # ee_torque_arrs = np.zeros((eval_episodes, num_env_eval, cfg.env.max_episode_steps, 3))
+        ee_force_arr = []
+        ee_torque_arr = []
         delta_action_norms = np.zeros((eval_episodes, num_env_eval))
         subgoal_rate_arrs = {subgoal: np.zeros((eval_episodes, num_env_eval)) for subgoal in subgoal_list}
         subgoal_time_arrs = {subgoal: np.zeros((eval_episodes, num_env_eval)) for subgoal in subgoal_list}
@@ -229,6 +233,8 @@ def main(cfg: OmegaConf):
             obs = eval_env.reset()
 
             # Initializing per-episode rollout metrics.
+            ee_force_arr_i = []
+            ee_torque_arr_i = []
             delta_action_norms_i = []
             subgoal_rate_arrs_i = {subgoal: np.zeros(num_env_eval) for subgoal in subgoal_list}
             subgoal_time_arrs_i = {subgoal: np.zeros(num_env_eval) + MAX_STEPS for subgoal in subgoal_list}
@@ -277,6 +283,18 @@ def main(cfg: OmegaConf):
                                 subgoal_rate_arrs_i[subgoal][env_i] = 1
                                 subgoal_time_arrs_i[subgoal][env_i] = step_i + chunk_step_i / model.diffusion_act_chunk
 
+                # Other aggregate metrics, i.e. force/torque profiles.
+                ee_forces = np.array([
+                    [info[env_i]["chunk_info"][t]["ee_force"] for t in range(model.diffusion_act_chunk)] 
+                    for env_i in range(num_env_eval)
+                ])
+                ee_torques = np.array([
+                    [info[env_i]["chunk_info"][t]["ee_torque"] for t in range(model.diffusion_act_chunk)] 
+                    for env_i in range(num_env_eval)
+                ])
+                ee_force_arr_i.append(ee_forces)
+                ee_torque_arr_i.append(ee_torques)
+
                 # Post-processing environment step.
                 obs = next_obs
                 # TODO: rew stuff here?
@@ -288,6 +306,8 @@ def main(cfg: OmegaConf):
             # Updating aggregated rollout metrics.
             # TODO: SPLIT THIS UP IF USING CONTROL PARAMS
             # TODO: besides action norms, velocity profile?
+            ee_force_arr.append(np.concatenate(ee_force_arr_i, axis=-2))
+            ee_torque_arr.append(np.concatenate(ee_torque_arr_i, axis=-2))
             delta_action_norms[i] = np.array(delta_action_norms_i).mean(axis=0)
 
             # Updating subgoal metrics.
@@ -312,8 +332,20 @@ def main(cfg: OmegaConf):
             for subgoal in subgoal_list
         }
 
+        # Computing force/torque profile metrics.
+        ee_force_arr = np.linalg.norm(np.array(ee_force_arr), axis=-1)
+        ee_torque_arr = np.linalg.norm(np.array(ee_torque_arr), axis=-1)
+        # Masking out force/torque values after success.
+        t_idx = np.arange(cfg.env.max_episode_steps)
+        t_mask = t_idx > (subgoal_time_arrs["success"][:, :, None] * model.diffusion_act_chunk)
+        ee_force_arr_masked = np.where(t_mask, np.nan, ee_force_arr)
+        ee_torque_arr_masked = np.where(t_mask, np.nan, ee_torque_arr)
+        avg_ee_force = np.nanmean(ee_force_arr_masked, axis=-1).mean()
+        quant90_ee_force = np.nanquantile(ee_force_arr_masked, 0.9, axis=-1).mean()
+
         # Printing out evaluation metrics.
         print(f"Average delta action norm: {delta_action_norms:.4f}")
+        print(f"Average/ 90th percentile EE force: {avg_ee_force:.4f} / {quant90_ee_force:.4f}")
         print(f"Subgoal {'/'.join(subgoal_list)} rates: {' / '.join([f'{subgoal_rates[subgoal]:.2f}' for subgoal in subgoal_list])}")
         print(f"Subgoal {'/'.join(subgoal_list)} avg success times: {' / '.join([f'{subgoal_success_times[subgoal]:.2f}' for subgoal in subgoal_list])}")
         print(f"Subgoal {'/'.join(subgoal_list)} throughputs: {' / '.join([f'{throughputs[subgoal]:.4f}' for subgoal in subgoal_list])}")

@@ -9,6 +9,7 @@ import uuid
 import re
 import numpy as np
 import hydra
+from hydra.core.hydra_config import HydraConfig # used to parse command overrides
 from omegaconf import OmegaConf
 import gym, d4rl
 import d4rl.gym_mujoco
@@ -35,6 +36,7 @@ from utils import (
     collect_initial_rollouts, 
     LoggingCallback, 
     visualize_base_value,
+    flatten_wandb_cfg,
 )
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -51,10 +53,6 @@ base_path = os.path.dirname(os.path.abspath(__file__))
 )
 def main(cfg: OmegaConf):
     OmegaConf.resolve(cfg)
-
-    random.seed(cfg.seed)
-    np.random.seed(cfg.seed)
-    torch.manual_seed(cfg.seed)
 
     assert cfg.use_wandb, "WandB logging must be enabled."
     # If resuming from a previous run...
@@ -81,6 +79,19 @@ def main(cfg: OmegaConf):
         print(f"Resuming from checkpoint at step {recent_steps}.")
         model_load_path = os.path.join(cfg.run_dir, "checkpoint", f"ft_policy_{recent_steps}_steps.zip")
         buffer_load_path = os.path.join(cfg.run_dir, "checkpoint", f"ft_policy_replay_buffer_{recent_steps}_steps.pkl")
+
+        # Loading previous wandb config to ensure consistency.
+        wandb_cfg_path = os.path.join(cfg.run_dir, "wandb", "latest-run", "files", "config.yaml")
+        prev_wandb_cfg = OmegaConf.load(wandb_cfg_path)
+        prev_wandb_cfg = OmegaConf.create(
+            flatten_wandb_cfg(OmegaConf.to_container(prev_wandb_cfg, resolve=True))
+        )
+
+        # Grabbing command line overrides to update previous config.
+        overrides = OmegaConf.from_dotlist(list(HydraConfig.get().overrides.task))
+
+        # Merging previous wandb config with current command overrides.
+        cfg = OmegaConf.merge(prev_wandb_cfg, overrides)
 
         # Initialize wandb in resume mode.
         # resume_kwargs = {"resume_from": f"{cfg.wandb.id}?_step={recent_steps}"}
@@ -113,6 +124,9 @@ def main(cfg: OmegaConf):
         with open(os.path.join(cfg.log_dir, cfg.wandb.save_id_local_path), 'w') as f:
             f.write(cfg.wandb.id)
 
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
     MAX_STEPS = int(cfg.env.max_episode_steps / cfg.act_steps)
 
     num_env = cfg.env.n_envs
@@ -282,7 +296,7 @@ def main(cfg: OmegaConf):
     model.learn(
         total_timesteps = total_timesteps,
         callback = callbacks,
-        progress_bar = False,
+        progress_bar = True,
         reset_num_timesteps = not cfg.resume,
     )
 

@@ -263,8 +263,6 @@ def main(cfg: OmegaConf):
     if not cfg.resume:
         # ...evaluate base policy...
         logging_callback.evaluate(model, deterministic=False, evaluate_base=True)
-        if cfg.deterministic_eval:
-            logging_callback.evaluate(model, deterministic=True)
         logging_callback.log_count += 1
 
         # ...load offline data and warm-start replay buffer...

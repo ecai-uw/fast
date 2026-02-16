@@ -284,6 +284,9 @@ class ActionChunkWrapper(gymnasium.Env):
 		info["chunk_info"] = info_.copy()
 		if self.count >= self.max_episode_steps:
 			done = True
+		# Terminating env on success.
+		if reward > 0:
+			done = True
 		if done:
 			info['terminal_observation'] = obs
 		return obs, reward, done, False, info

@@ -201,7 +201,7 @@ def main(cfg: OmegaConf):
 
     # Run evaluation rollouts.
     save_video = eval_cfg.save_video and (cfg.seed == 1)
-    sample_base = eval_cfg.eval_base
+    # sample_base = eval_cfg.eval_base
     subgoal_list = subgoal_list_dict[cfg.env_name]
     eval_episodes = int(cfg.num_evals / num_env_eval)
 
@@ -239,7 +239,22 @@ def main(cfg: OmegaConf):
             subgoal_rate_arrs_i = {subgoal: np.zeros(num_env_eval) for subgoal in subgoal_list}
             subgoal_time_arrs_i = {subgoal: np.zeros(num_env_eval) + MAX_STEPS for subgoal in subgoal_list}
 
+            # Initializing base policy stats for jumpstart.
+            jumpstart = cfg.policy.jumpstart
+            if jumpstart == "curriculum":
+                # Load base policy stats.
+                base_stats = np.loadtxt(cfg.base_stats_path, dtype=float)
+                base_avg_horizon = base_stats[0]
+                base_avg_success_rate = base_stats[1]
+
             for step_i in range(MAX_STEPS):
+                sample_base = eval_cfg.eval_base
+                # # TODO: update sample base depending on jumpstart logic.
+                if cfg.policy.jumpstart == "curriculum" and not sample_base:
+                    horizon_threshold = (1.0 - (model.jumpstart_stage) / model.jumpstart_n) * base_avg_horizon
+                    if step_i < horizon_threshold:
+                        sample_base = True
+
                 # Sample action and step environment.
                 action, predict_second_return = model.predict_diffused(
                     obs, deterministic=cfg.deterministic_eval, sample_base=sample_base

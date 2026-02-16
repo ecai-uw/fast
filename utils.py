@@ -84,26 +84,19 @@ class LoggingCallback(BaseCallback):
 		assert "success" in self.subgoal_list, "Success check must be in subgoal list for logging."
 
 		# TODO: some hacky jumpstart logging logic for now
-		if "jumpstart" in self.cfg.policy:
-				self.jumpstart = self.cfg.policy.jumpstart
-		else:
-			self.jumpstart = False
-
-		if "jumpstart2" in self.cfg.policy and self.cfg.policy.jumpstart2 == "curriculum":
-			self.jumpstart2 = self.cfg.policy.jumpstart2
+		# lazy eval to allow for backwards compatibility.
+		if "jumpstart" in self.cfg.policy and self.cfg.policy.jumpstart is not False:
+			self.jumpstart = self.cfg.policy.jumpstart
 			self.jumpstart_performance_buffer = []
 			self.jumpstart_beta = self.cfg.policy.jumpstart_beta
 			self.jumpstart_ma = self.cfg.policy.jumpstart_ma
 		else:
-			self.jumpstart2 = None
+			self.jumpstart = None
 			self.jumpstart_performance_buffer = []
 			self.jumpstart_beta = 0.05
 			self.jumpstart_ma = 3
 		
-		if self.jumpstart2 is not None:
-			self.jumpstart = False
-		
-		if self.jumpstart or self.jumpstart2 == "curriculum":
+		if self.jumpstart == "curriculum":
 			# Load base policy stats.
 			base_stats = np.loadtxt(self.cfg.base_stats_path, dtype=float)
 			self.base_avg_horizon = base_stats[0]
@@ -169,9 +162,10 @@ class LoggingCallback(BaseCallback):
 		# NOTE: this might behave weirdly with checkpoint resuming if save_freq for checkpoint...
 		# ...is not divisible by eval_freq.
 		if self.n_calls % self.eval_freq == 0:
-			self.evaluate(self.locals['self'], deterministic=False)
-			if self.deterministic_eval:
-				self.evaluate(self.locals['self'], deterministic=True)
+			# self.evaluate(self.locals['self'], deterministic=False)
+			# if self.deterministic_eval:
+			# 	self.evaluate(self.locals['self'], deterministic=True)
+			self.evaluate(self.locals['self'], deterministic=self.deterministic_eval)
 		return True
 	
 	def evaluate(self, agent, deterministic=False, evaluate_base=False):
@@ -183,7 +177,6 @@ class LoggingCallback(BaseCallback):
 			obs_arr = []
 			action_arr = []
 			scale_viz_arr = []
-
 
 			with torch.no_grad():
 				# Initializing rollout metrics.
@@ -207,8 +200,15 @@ class LoggingCallback(BaseCallback):
 					subgoal_time_arrs_i = {subgoal: np.zeros(obs.shape[0]) + self.max_steps for subgoal in self.subgoal_list}
 
 					for step_i in range(self.max_steps):
+						sample_base = evaluate_base
+						# TODO: update sample_base depending on jumpstart logic.
+						if self.jumpstart == "curriculum" and not evaluate_base:
+							horizon_threshold = (1.0 - (agent.jumpstart_stage) / agent.jumpstart_n) * self.base_avg_horizon
+							if step_i < horizon_threshold:
+								sample_base = True
+
 						# Sample action and step environment.
-						action, predict_second_return = agent.predict_diffused(obs, deterministic=deterministic, sample_base=evaluate_base)
+						action, predict_second_return = agent.predict_diffused(obs, deterministic=deterministic, sample_base=sample_base)
 						next_obs, reward, done, info = env.step(action)
 
 						action_arr_i.append(action)
@@ -255,7 +255,8 @@ class LoggingCallback(BaseCallback):
 							subgoal_time_arrs_i[subgoal][success_i].mean()
 							if np.sum(success_i) > 0 else self.max_steps
 						)
-					print(f'eval episode {i} at timestep {self.total_timesteps}')
+					# print(f'eval episode {i} at timestep {self.total_timesteps}')
+					print(f"eval episode {i} at timestep {self.num_timesteps}")
 
 					# Computing shaped rewards with obs - next_obs pairs.
 					# TODO: WARNING: this is technically diffeent from how environment returns are aggregated.
@@ -297,7 +298,7 @@ class LoggingCallback(BaseCallback):
 				# TODO: handling jumpstart logic here
 				jumpstart_stage = agent.jumpstart_stage
 				jumpstart_n = agent.jumpstart_n
-				if self.jumpstart2 == "curriculum":
+				if self.jumpstart == "curriculum" and not evaluate_base:
 					# Updating jumpstart performance buffer and stage, if necessary.
 					self.jumpstart_performance_buffer.append(subgoal_rate_arrs["success"])
 					if len(self.jumpstart_performance_buffer) > self.jumpstart_ma:
@@ -307,9 +308,11 @@ class LoggingCallback(BaseCallback):
 						ma_success_rate = np.mean(self.jumpstart_performance_buffer)
 					else:
 						ma_success_rate = 0
+					
 					# If success rate exceeds threshold, increase jumpstart stage.
 					if ma_success_rate > (1.0 - self.jumpstart_beta) * self.base_avg_success_rate and jumpstart_stage < jumpstart_n:
-						agent.jumpstart_stage += 1
+						agent.jumpstart_stage  = min(agent.jumpstart_stage + 1, agent.jumpstart_n)
+						self.jumpstart_performance_buffer = []  # Resetting performance buffer for new stage.
 
 				# -------------------------- ROLLOUT VISUALIZATION --------------------------
 				rollout_vid = np.array(rollout_vid)
@@ -341,7 +344,7 @@ class LoggingCallback(BaseCallback):
 					wandb.log(subgoal_log_dict, step=self.num_timesteps)
 
 					# TODO: handle jumpstart logic here
-					if self.jumpstart2 == "curriculum":
+					if self.jumpstart == "curriculum" and not evaluate_base:
 						wandb.log({
 							f"{name}/jumpstart_stage": agent.jumpstart_stage,
 							f"{name}/jumpstart_ma_success_rate": ma_success_rate,
@@ -355,11 +358,6 @@ class LoggingCallback(BaseCallback):
 							f"{name}/rollout_vid": wandb.Video(rollout_vid, fps=10, format="gif")
 						}, step=self.num_timesteps)
 
-						# if len(scale_viz_arr) > 0:
-						# 	wandb.log({
-						# 		f"{name}/scale_viz_vid": wandb.Video(scale_viz_frames, fps=10, format="gif")
-						# 	}, step=self.num_timesteps)
-
 	def set_timesteps(self, timesteps):
 		self.total_timesteps = timesteps
 
@@ -368,11 +366,6 @@ class LoggingCallback(BaseCallback):
 def collect_initial_rollouts(model, env, num_steps, base_policy, cfg):
 	obs = env.reset()
 	for i in tqdm(range(num_steps)):
-		# noise = torch.randn(cfg.env.n_envs, cfg.act_steps, cfg.action_dim).to(device=cfg.device)
-		# action = base_policy(torch.tensor(obs, device=cfg.device, dtype=torch.float32), noise)
-		# action = action.reshape(-1, cfg.act_steps * cfg.action_dim)
-		# if model.policy_impedance_mode != "fixed":
-		# 	action = model.augment_controller_action(action)
 		action = model.sample_base_policy(obs, return_numpy=True)
 
 		# Add initial rollout noise for better coverage, if necessary.
@@ -646,7 +639,12 @@ def flatten_wandb_cfg(wandb_cfg):
 		if "value" in wandb_cfg.keys():
 			return wandb_cfg["value"]
 		else:
-			return {k: flatten_wandb_cfg(v) for k, v in wandb_cfg.items()}
+			return_dict = {k: flatten_wandb_cfg(v) for k, v in wandb_cfg.items()}
+			# Removing run-specific wandb keys.
+			for key in ["wandb_version", "_wandb"]:
+				if key in return_dict:
+					return_dict.pop(key)
+			return return_dict
 	return wandb_cfg
 
 def plot_metric_frames(data_dict, subgoal_dict, title, xlabel='Timestep', ylabel='Value', h=256, w=256):

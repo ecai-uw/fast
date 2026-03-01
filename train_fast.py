@@ -144,8 +144,11 @@ def main(cfg: OmegaConf):
                 impedance_mode=cfg.policy.impedance_mode,
                 control_obs=cfg.env.control_obs,
             )
-            # env = ObservationWrapperRobomimic(env, reward_offset=cfg.env.reward_offset)
-            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset)
+            if "simple_reset" in cfg.env:
+                simple_reset = cfg.env.simple_reset
+            else:
+                simple_reset = False
+            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset, simple_reset=simple_reset)
         env = ResidualPolicyWrapper(env, cfg)
         env = ActionChunkWrapper(env, cfg, max_episode_steps=cfg.env.max_episode_steps)
         return env

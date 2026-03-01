@@ -97,13 +97,17 @@ class LoggingCallback(BaseCallback):
 			self.jumpstart_ma = 3
 		
 		if self.jumpstart == "curriculum":
+			base_stats_path = self.cfg.base_stats_path
+			if "simple_reset" in self.cfg.env and self.cfg.env.simple_reset:
+				base, ext = os.path.splitext(base_stats_path)
+				base_stats_path = base + "_simple_reset" + ext
 			# Load base policy stats.
-			base_stats = np.loadtxt(self.cfg.base_stats_path, dtype=float)
+			base_stats = np.loadtxt(base_stats_path, dtype=float)
 			self.base_avg_horizon = base_stats[0]
 			self.base_avg_success_rate = base_stats[1]
 		else:
 			self.base_avg_horizon = None
-			self.base_avg_success_rate = None	
+			self.base_avg_success_rate = None
 
 	def _on_step(self):
 		for info in self.locals['infos']:
@@ -176,7 +180,6 @@ class LoggingCallback(BaseCallback):
 			rollout_vid = []
 			obs_arr = []
 			action_arr = []
-			scale_viz_arr = []
 
 			with torch.no_grad():
 				# Initializing rollout metrics.
@@ -208,7 +211,7 @@ class LoggingCallback(BaseCallback):
 								sample_base = True
 
 						# Sample action and step environment.
-						action, predict_second_return = agent.predict_diffused(obs, deterministic=deterministic, sample_base=sample_base)
+						action, _ = agent.predict_diffused(obs, deterministic=deterministic, sample_base=sample_base)
 						next_obs, reward, done, info = env.step(action)
 
 						action_arr_i.append(action)
@@ -218,8 +221,6 @@ class LoggingCallback(BaseCallback):
 							obs_arr.append(obs[0])
 							action_arr.append(action[0])
 							rollout_vid.append(env.env_method('render')[0])
-							if predict_second_return is not None:
-								scale_viz_arr.append(predict_second_return[0].mean())
 
 						# Ugly manual check for subgoal success info.
 						chunk_info = [info_dict["chunk_info"] for info_dict in info]
@@ -654,7 +655,7 @@ def plot_metric_frames(data_dict, subgoal_dict, title, xlabel='Timestep', ylabel
 	num_frames = len(next(iter(data_dict.values())))
 	final_subgoal_time = max(subgoal_dict.values())
 	# Cutting off frames after success.
-	num_frames = int(min(num_frames, final_subgoal_time + 10))
+	num_frames = int(min(num_frames, final_subgoal_time + 1))
 	buf = io.BytesIO()
 	frames = []
 

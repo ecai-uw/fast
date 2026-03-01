@@ -104,20 +104,24 @@ def main(cfg: OmegaConf):
             env = make_robomimic_env(
                 render=True, 
                 env=cfg.env_name, 
-                normalization_path=cfg.normalization_path, 
-                low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, 
+                wrappers=cfg.env.wrappers,
+                # normalization_path=cfg.normalization_path, 
+                # low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, 
                 dppo_path=cfg.dppo_path,
-                impedance_mode=cfg.policy.impedance_mode,
-                control_obs=cfg.env.control_obs,
+                # impedance_mode=cfg.policy.impedance_mode,
+                # control_obs=cfg.env.control_obs,
             )
-            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset)
+            if "simple_reset" in cfg.env:
+                simple_reset = cfg.env.simple_reset
+            else:
+                simple_reset = False
+            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset, simple_reset=simple_reset)
         env = ResidualPolicyWrapper(env, cfg, full_render=True)
         env = ActionChunkWrapper(env, cfg, max_episode_steps=cfg.env.max_episode_steps)
         return env
 
-    # env = make_env()
-    # env.step(np.array([0, 0, 0, 0, 0, 0, 0, 0, 0] * 4))  # test step
-    # breakpoint()
+    env = make_env()
+    breakpoint()
 
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)
     env.seed(cfg.seed + 1)
@@ -209,7 +213,6 @@ def main(cfg: OmegaConf):
     log_dir = os.path.join(cfg.run_dir, "videos")
     os.makedirs(log_dir, exist_ok=True)
 
-
     with torch.no_grad():
         # Initializing rollout visualization data.
         rollout_frames_unchunked = []
@@ -218,10 +221,10 @@ def main(cfg: OmegaConf):
         rollout_damping_unchunked = []
         rollout_ee_forces_unchunked = []
         rollout_ee_torques_unchunked = []
+        rollout_actions = [] # Can't un-chunk for q values.
+        rollout_observations = [] # Can't un-chunk for q values.
 
         # Initializing aggregated evaluation metrics.
-        # ee_force_arrs = np.zeros((eval_episodes, num_env_eval, cfg.env.max_episode_steps, 3))
-        # ee_torque_arrs = np.zeros((eval_episodes, num_env_eval, cfg.env.max_episode_steps, 3))
         ee_force_arr = []
         ee_torque_arr = []
         delta_action_norms = np.zeros((eval_episodes, num_env_eval))
@@ -249,14 +252,15 @@ def main(cfg: OmegaConf):
 
             for step_i in range(MAX_STEPS):
                 sample_base = eval_cfg.eval_base
-                # # TODO: update sample base depending on jumpstart logic.
+                # # # TODO: update sample base depending on jumpstart logic.
                 if cfg.policy.jumpstart == "curriculum" and not sample_base:
                     horizon_threshold = (1.0 - (model.jumpstart_stage) / model.jumpstart_n) * base_avg_horizon
                     if step_i < horizon_threshold:
                         sample_base = True
 
                 # Sample action and step environment.
-                action, predict_second_return = model.predict_diffused(
+                # sample_base = True # TEMP: DEBUGGING
+                action, residual = model.predict_diffused(
                     obs, deterministic=cfg.deterministic_eval, sample_base=sample_base
                 )
                 next_obs, reward, done, info = eval_env.step(action)
@@ -287,6 +291,8 @@ def main(cfg: OmegaConf):
                         np.array([info[env_i]["chunk_info"][t]["ee_torque"] for t in range(model.diffusion_act_chunk)])
                         for env_i in range(num_env_eval)
                     ])
+                    rollout_actions.append(np.expand_dims(action, 1))
+                    rollout_observations.append(np.expand_dims(obs, 1))
 
                 # Ugly manual check for subgoal success info.
                 chunk_info = [info_dict["chunk_info"] for info_dict in info]
@@ -401,6 +407,43 @@ def main(cfg: OmegaConf):
                 axis=-1
             )
 
+            if not cfg.eval.eval_base:
+                # Only need to compute Q values for non base-policy.
+                rollout_actions = np.concatenate(rollout_actions, axis=1)
+                rollout_observations = np.concatenate(rollout_observations, axis=1)
+                rollout_qs = []
+                rollout_vs = []
+                for t in tqdm(range(rollout_actions.shape[1])):
+                    # Getting Qs.
+                    qs = torch.cat(model.critic(
+                        torch.tensor(rollout_actions[:, t, :], device=model.device, dtype=torch.float32),
+                        torch.tensor(rollout_observations[:, t, :], device=model.device, dtype=torch.float32),
+                    ), dim=1).mean(dim=1, keepdim=True)
+                    rollout_qs.append(qs.cpu().numpy().repeat(model.diffusion_act_chunk, axis=1))
+
+                    # Getting Vs.
+                    # vs = []
+                    # for e in range(num_env_eval):
+                    #     obs_t_e = np.repeat(rollout_observations[[e], t, :], 16, axis=0)
+                    #     action_t_e = model.predict_diffused(
+                    #         obs_t_e, deterministic=True, sample_base=False
+                    #     )[0]
+                    #     qs_t_e = torch.cat(model.critic(
+                    #         torch.tensor(action_t_e, device=model.device, dtype=torch.float32),
+                    #         torch.tensor(obs_t_e, device=model.device, dtype=torch.float32),
+                    #     ), dim=1).mean(dim=1, keepdim=True)
+                    #     vs_t_e = qs_t_e.mean(dim=0, keepdim=True)
+                    #     vs.append(vs_t_e.cpu().numpy())
+                    # vs = np.concatenate(vs, axis=0)
+                    # rollout_vs.append(vs.repeat(model.diffusion_act_chunk, axis=1))
+                rollout_qs = np.concatenate(rollout_qs, axis=1)
+                # rollout_vs = np.concatenate(rollout_vs, axis=1)
+            else:
+                # Otherwise just visualize dummy values.
+                rollout_qs = np.zeros((num_env_eval, cfg.env.max_episode_steps))
+                # rollout_vs = np.zeros((num_env_eval, cfg.env.max_episode_steps))
+            
+
             # Grabbing subgoal times for vertical plot lines.
             rollout_subgoal_times = {
                 k: v[0] * model.diffusion_act_chunk for k, v in subgoal_time_arrs.items()
@@ -418,6 +461,8 @@ def main(cfg: OmegaConf):
 
                 # Convert rollout vid to video.
                 rollout_vid_frames_i = [Image.fromarray(f) for f in rollout_frames_unchunked_i]
+                success_time_i = subgoal_time_arrs["success"][0, env_i]
+                rollout_vid_frames_i = rollout_vid_frames_i[: int(success_time_i * model.diffusion_act_chunk) + 1]
                 rollout_vid_frames_i[0].save(
                     f"{log_dir}/rollout_{tag}.gif",
                     save_all=True,
@@ -460,10 +505,15 @@ def main(cfg: OmegaConf):
                     subgoal_dict=rollout_subgoal_times_i,
                     title=f"Rollout EE Force",
                 )
-                ee_torque_i_plots = plot_metric_frames(
-                    {"ee_torque": rollout_ee_torques_unchunked[env_i, ...]},
+                # ee_torque_i_plots = plot_metric_frames(
+                #     {"ee_torque": rollout_ee_torques_unchunked[env_i, ...]},
+                #     subgoal_dict=rollout_subgoal_times_i,
+                #     title=f"Rollout EE Torque",
+                # )
+                q_i_plots = plot_metric_frames(
+                    {"q": rollout_qs[env_i, ...]},
                     subgoal_dict=rollout_subgoal_times_i,
-                    title=f"Rollout EE Torque",
+                    title=f"Rollout Q values",
                 )
 
                 metric_plot_list = [
@@ -471,7 +521,8 @@ def main(cfg: OmegaConf):
                     damping_i_plots,
                     stiffness_i_plots,
                     ee_force_i_plots,
-                    ee_torque_i_plots,
+                    # ee_torque_i_plots,
+                    q_i_plots,
                 ]
                 rollout_metric_frames_i = plot_rollout_with_metrics(rollout_vid_frames_unchunked_i, metric_plot_list)
                 rollout_metric_frames_i[0].save(

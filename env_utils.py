@@ -18,20 +18,21 @@ import robomimic.utils.obs_utils as ObsUtils
 def make_robomimic_env(
 	render=False, 
 	env='square', 
-	normalization_path=None, 
-	low_dim_keys=None, 
+	wrappers=None,
+	# normalization_path=None, 
+	# low_dim_keys=None, 
 	dppo_path=None,
-	impedance_mode='fixed',
-	control_obs=False,
+	# impedance_mode='fixed',
+	# control_obs=False,
 ):
-	wrappers = OmegaConf.create({
-		'robomimic_lowdim': {
-			'normalization_path': normalization_path,
-			'low_dim_keys': low_dim_keys,
-			'impedance_mode': impedance_mode,
-			'control_obs': control_obs,
-		},
-	})
+	# wrappers = OmegaConf.create({
+	# 	'robomimic_lowdim': {
+	# 		'normalization_path': normalization_path,
+	# 		'low_dim_keys': low_dim_keys,
+	# 		'impedance_mode': impedance_mode,
+	# 		'control_obs': control_obs,
+	# 	},
+	# })
 	obs_modality_dict = {
 		"low_dim": (
 			wrappers.robomimic_image.low_dim_keys
@@ -52,11 +53,26 @@ def make_robomimic_env(
 		env_meta = json.load(f)
 	env_meta["reward_shaping"] = False
 
-	# TODO: manually setting controller impedance mode for now
-	env_meta["env_kwargs"]["controller_configs"]["impedance_mode"] = impedance_mode
-	env_meta["env_kwargs"]["controller_configs"]["kp_limits"] = [0, 1500]
+	# # TODO: manually setting controller impedance mode for now
+	# env_meta["env_kwargs"]["controller_configs"]["impedance_mode"] = impedance_mode
+	# env_meta["env_kwargs"]["controller_configs"]["kp_limits"] = [0, 1500]
+
+	# Updating env_meta with controller configs.
+	if "robomimic_lowdim" in wrappers:
+		controller_configs = wrappers.robomimic_lowdim.controller_configs
+	elif "robomimic_image" in wrappers:
+		controller_configs = wrappers.robomimic_image.controller_configs
+	else:
+		raise ValueError("Controller config must be specified in either robomimic_lowdim or robomimic_image wrapper.")
+	
+	env_meta["env_kwargs"]["controller_configs"]["impedance_mode"] = controller_configs["impedance_mode"]
+	env_meta["env_kwargs"]["controller_configs"]["kp"] = controller_configs["kp"]
+	env_meta["env_kwargs"]["controller_configs"]["kp_limits"] = controller_configs["kp_limits"]
+	env_meta["env_kwargs"]["controller_configs"]["damping"] = controller_configs["damping"]
+	env_meta["env_kwargs"]["controller_configs"]["damping_limits"] = controller_configs["damping_limits"]
 	# TODO: Exposing controller config parameters to robomimic env for normalization purposes.
-	wrappers.robomimic_lowdim.controller_configs = env_meta["env_kwargs"]["controller_configs"]
+	# TODO: this does not work well with image yet.
+	# wrappers.robomimic_lowdim["controller_configs"] = env_meta["env_kwargs"]["controller_configs"]
 
 	env = EnvUtils.create_env_from_metadata(
 		env_meta=env_meta,
@@ -184,7 +200,6 @@ class ObservationWrapperRobomimic(gym.Env):
 	def render(self, **kwargs):
 		return self.env.render()
 	
-
 class ObservationWrapperGym(gym.Env):
 	def __init__(
 		self,
@@ -231,7 +246,6 @@ class ObservationWrapperGym(gym.Env):
 		action = (action + 1) / 2
 		return action * (self.action_max - self.action_min) + self.action_min
 	
-
 class ActionChunkWrapper(gymnasium.Env):
 	def __init__(self, env, cfg, max_episode_steps=300):
 		self.max_episode_steps = max_episode_steps
@@ -277,7 +291,7 @@ class ActionChunkWrapper(gymnasium.Env):
 			done_.append(done_i)
 			info_.append(info_i)
 		obs = obs_[-1]
-		reward = sum(reward_)
+		reward = max(reward_)
 		done = np.max(done_)
 		info = info_[-1].copy()
 		# Also adding entire chunk info history
@@ -300,7 +314,6 @@ class ActionChunkWrapper(gymnasium.Env):
 	def get_step_count(self):
 		return self.count
 	
-
 class DiffusionPolicyEnvWrapper(VecEnvWrapper):
 	def __init__(self, env, cfg, base_policy):
 		super().__init__(env)
@@ -341,9 +354,16 @@ class DiffusionPolicyEnvWrapper(VecEnvWrapper):
 		return obs_out.detach().cpu().numpy()
 
 class LiftEvalWrapper(ObservationWrapperRobomimic):
-	def __init__(self, env, reward_offset=1):
+	def __init__(self, env, reward_offset=1, simple_reset=False):
 		super().__init__(env, reward_offset=reward_offset)
 		self.subgoals = ['reach', 'grasp', 'success']
+		self.simple_reset = simple_reset
+
+		if self.simple_reset:
+			lift_env = self.env.env.env
+			lift_env.placement_initializer.x_range = (0.0, 0.0)
+			lift_env.placement_initializer.y_range = (0.0, 0.0)
+			lift_env.placement_initializer.rotation = 0.0
     
     # only overriding step to extract subgoal information
 	def step(self, action):
@@ -371,9 +391,21 @@ class LiftEvalWrapper(ObservationWrapperRobomimic):
 		return obs, reward, done, info
 
 class CanEvalWrapper(ObservationWrapperRobomimic):
-	def __init__(self, env, reward_offset=1):
+	def __init__(self, env, reward_offset=1, simple_reset=False):
 		super().__init__(env, reward_offset=reward_offset)
 		self.subgoals = ['reach', 'grasp', 'hover', 'success']
+		self.simple_reset = simple_reset
+		if self.simple_reset:
+			can_env = self.env.env.env
+			# VERY HACKY: setting virtual radius of object to 0 to avoid random sampling.
+			def zero_radius_sampler(*args, **kwargs):
+				return 0.0
+			can_env.objects[can_env.object_id].__class__.horizontal_radius = property(zero_radius_sampler)
+			# Setting ensure_valid_placement to False.
+			can_env.placement_initializer.samplers["CollisionObjectSampler"].ensure_valid_placement = False
+			can_env.placement_initializer.samplers["CollisionObjectSampler"].x_range = (0.04, 0.04)
+			can_env.placement_initializer.samplers["CollisionObjectSampler"].y_range = (-0.08, -0.08)
+			can_env.placement_initializer.samplers["CollisionObjectSampler"].rotation = 0
 
 	# only overriding step to extract subgoal information
 	def step(self, action):
@@ -413,10 +445,17 @@ class CanEvalWrapper(ObservationWrapperRobomimic):
 		return obs, reward, done, info
 
 class SquareEvalWrapper(ObservationWrapperRobomimic):
-	def __init__(self, env, reward_offset=1):
+	def __init__(self, env, reward_offset=1, simple_reset=False):
 		super().__init__(env, reward_offset=reward_offset)
 		self.subgoals = ['reach', 'grasp', 'hover', 'success']
-
+		self.simple_reset = simple_reset
+		# TODO: will probably have to manually override placement initializer
+		if self.simple_reset:
+			square_env = self.env.env.env
+			square_env.placement_initializer.samplers["SquareNutSampler"].x_range = (-0.112, -0.112)
+			square_env.placement_initializer.samplers["SquareNutSampler"].y_range = (0.174, 0.174)
+			square_env.placement_initializer.samplers["SquareNutSampler"].rotation = np.pi / 6
+	
 	# only overriding step to extract subgoal information
 	def step(self, action):
 		raw_obs, reward, done, info = self.env.step(action)

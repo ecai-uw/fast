@@ -73,8 +73,7 @@ env:
     robot0_gripper_qpos: 2
     object: 14
   control_obs: True # Whether to include controller state in observation.
-  average_base_horizon: 36.54 # Average success time of base policy - used for JSRL.
-  
+  simple_reset: False # if True, always reset to same initial state.
 
 policy:
   type: residual # residual, residual_scale, residual_force, residual_scale2, residual_force2
@@ -93,6 +92,7 @@ policy:
   jumpstart_n: 10 # Number of curriculum stages.
   jumpstart_beta: 0.05 # Tolerance threshold for jumpstart curriculum.
   jumpstart_ma: 3 # Moving average window size for jumpstart curriculum success rate.
+  jumpstart_buffer: False # If True, also add jumpstart rollout data to replay buffer (generally should be False).
 
 train:
   tau: 0.005 # Target update rate

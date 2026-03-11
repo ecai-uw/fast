@@ -21,11 +21,15 @@ class DPPOBasePolicyWrapper:
 	def __init__(self, base_policy):
 		self.base_policy = base_policy
 		
-	def __call__(self, obs, initial_noise, return_numpy=True):
-		cond = {
-			"state": obs,
-			"noise_action": initial_noise,
-		}
+	def __call__(self, obs, return_numpy=True):
+		# cond = {
+		# 	"state": obs,
+		# 	"noise_action": initial_noise,
+		# }
+		if isinstance(obs, dict):
+			cond = obs
+		else:
+			cond = {"state": obs}
 		with torch.no_grad():
 			samples = self.base_policy(cond=cond, deterministic=True)
 		diffused_actions = (samples.trajectories.detach())
@@ -199,8 +203,8 @@ class LoggingCallback(BaseCallback):
 					r = []
 					delta_action_norms_i = []
 
-					subgoal_rate_arrs_i = {subgoal: np.zeros(obs.shape[0]) for subgoal in self.subgoal_list}
-					subgoal_time_arrs_i = {subgoal: np.zeros(obs.shape[0]) + self.max_steps for subgoal in self.subgoal_list}
+					subgoal_rate_arrs_i = {subgoal: np.zeros(self.num_eval_env) for subgoal in self.subgoal_list}
+					subgoal_time_arrs_i = {subgoal: np.zeros(self.num_eval_env) + self.max_steps for subgoal in self.subgoal_list}
 
 					for step_i in range(self.max_steps):
 						sample_base = evaluate_base
@@ -218,13 +222,14 @@ class LoggingCallback(BaseCallback):
 						obs_arr_i.append(obs)
 						# Logging, if necessary
 						if i == 0:
-							obs_arr.append(obs[0])
+							# TODO: need to fix this for image based obs dicts.
+							# obs_arr.append(obs[0])
 							action_arr.append(action[0])
 							rollout_vid.append(env.env_method('render')[0])
 
 						# Ugly manual check for subgoal success info.
 						chunk_info = [info_dict["chunk_info"] for info_dict in info]
-						for env_i in range(obs.shape[0]):
+						for env_i in range(self.num_eval_env):
 							for chunk_step_i in range(self.action_chunk):
 								step_info = chunk_info[env_i][chunk_step_i]
 								for subgoal in self.subgoal_list:
@@ -256,7 +261,6 @@ class LoggingCallback(BaseCallback):
 							subgoal_time_arrs_i[subgoal][success_i].mean()
 							if np.sum(success_i) > 0 else self.max_steps
 						)
-					# print(f'eval episode {i} at timestep {self.total_timesteps}')
 					print(f"eval episode {i} at timestep {self.num_timesteps}")
 
 					# Computing shaped rewards with obs - next_obs pairs.
@@ -264,19 +268,13 @@ class LoggingCallback(BaseCallback):
 					# TODO: WARNING: if this discrepancy emerges later, need to also track 'dones' to ensure consistency.
 					action_arr_i = np.array(action_arr_i)
 					obs_arr_i = np.array(obs_arr_i)
-					# for o, o_next in zip(obs_arr_i[:-1], obs_arr_i[1:]):
-					# 	# shaped_reward = agent.get_shaped_rewards(
-					# 	# 	torch.tensor(o, device=agent.device, dtype=torch.float32),
-					# 	# 	torch.tensor(o_next, device=agent.device, dtype=torch.float32),
-					# 	# )
-					# 	# shaped_rew_ep += shaped_reward.cpu().numpy().reshape(-1)
-					# 	shaped_rew_ep = [0]
-					for a, o in zip(action_arr_i, obs_arr_i):
-						shaped_reward = agent.get_shaped_rewards(
-							torch.tensor(a, device=agent.device, dtype=torch.float32),
-							torch.tensor(o, device=agent.device, dtype=torch.float32),
-						)
-						shaped_rew_ep += shaped_reward.cpu().numpy().reshape(-1)
+					# for a, o in zip(action_arr_i, obs_arr_i):
+					# 	shaped_reward = agent.get_shaped_rewards(
+					# 		torch.tensor(a, device=agent.device, dtype=torch.float32),
+					# 		torch.tensor(o, device=agent.device, dtype=torch.float32),
+					# 	)
+					# 	shaped_rew_ep += shaped_reward.cpu().numpy().reshape(-1)
+					shaped_rew_ep = [0]
 					shaped_rew_total += sum(shaped_rew_ep)				
 				
 				# ------------------------- MULTI-EPISODE EVALUATION POST-PROCESSING--------------------------
@@ -364,7 +362,7 @@ class LoggingCallback(BaseCallback):
 
 
 
-def collect_initial_rollouts(model, env, num_steps, base_policy, cfg):
+def collect_initial_rollouts(model, env, num_steps, cfg):
 	obs = env.reset()
 	for i in tqdm(range(num_steps)):
 		action = model.sample_base_policy(obs, return_numpy=True)

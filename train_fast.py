@@ -21,9 +21,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from env_utils import (
-    DiffusionPolicyEnvWrapper,
     ResidualPolicyWrapper,
-    ObservationWrapperRobomimic, 
     ObservationWrapperGym, 
     ActionChunkWrapper, 
     make_robomimic_env,
@@ -35,7 +33,6 @@ from utils import (
     load_offline_data, 
     collect_initial_rollouts, 
     LoggingCallback, 
-    visualize_base_value,
     flatten_wandb_cfg,
 )
 
@@ -136,19 +133,21 @@ def main(cfg: OmegaConf):
             env = ObservationWrapperGym(env, cfg.normalization_path)
         elif cfg.env_name in ['lift', 'can', 'square', 'transport']:
             env = make_robomimic_env(
-                render=True, 
-                env=cfg.env_name, 
-                normalization_path=cfg.normalization_path, 
-                low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, 
+                render=True,
+                use_image_obs=cfg.env.use_image_obs,
+                env=cfg.env_name,
+                wrappers=cfg.env.wrappers,
+                # normalization_path=cfg.normalization_path, 
+                # low_dim_keys=cfg.env.wrappers.robomimic_lowdim.low_dim_keys, 
                 dppo_path=cfg.dppo_path,
-                impedance_mode=cfg.policy.impedance_mode,
-                control_obs=cfg.env.control_obs,
+                # impedance_mode=cfg.policy.impedance_mode,
+                # control_obs=cfg.env.control_obs,
             )
             if "simple_reset" in cfg.env:
                 simple_reset = cfg.env.simple_reset
             else:
                 simple_reset = False
-            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset, simple_reset=simple_reset)
+            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset, simple_reset=simple_reset, use_image_obs=cfg.env.use_image_obs)
         env = ResidualPolicyWrapper(env, cfg)
         env = ActionChunkWrapper(env, cfg, max_episode_steps=cfg.env.max_episode_steps)
         return env
@@ -195,12 +194,22 @@ def main(cfg: OmegaConf):
             post_linear_modules=base_post_linear_modules,
             n_critics=cfg.base.n_critics,
         )
+
+        # Setting policy type based on environment type.
+        if cfg.env.use_image_obs:
+            policy_type = "MultiInputPolicy"
+            buffer_size = 200000 # smaller buffer size
+        else:
+            policy_type = "MlpPolicy"
+            buffer_size = 20000000
         model = FAST(
-            "MlpPolicy",
+            # "MlpPolicy",
+            policy_type,
             env,
             base_kwargs,
             learning_rate=cfg.train.actor_lr,
-            buffer_size=20000000,      # Replay buffer size
+            # buffer_size=20000000,      # Replay buffer size
+            buffer_size=buffer_size,
             learning_starts=1,    # How many steps before learning starts (total steps for all env combined)
             batch_size=cfg.train.batch_size,
             tau=cfg.train.tau,                # Target network update rate
@@ -270,9 +279,10 @@ def main(cfg: OmegaConf):
 
         # ...load offline data and warm-start replay buffer...
         if cfg.load_offline_data:
+            raise ValueError("Loading offline data is currently disabled.")
             load_offline_data(model, cfg.offline_data_path, num_env, cfg.act_steps, cfg.env.reward_offset)
         if cfg.train.init_rollout_steps > 0:
-            collect_initial_rollouts(model, env, cfg.train.init_rollout_steps, base_policy, cfg)	
+            collect_initial_rollouts(model, env, cfg.train.init_rollout_steps, cfg)	
             logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
 
         # ...and train base Q and V functions.

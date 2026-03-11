@@ -55,6 +55,7 @@ env:
   save_video: False
   best_reward_threshold_for_success: 1 
   reward_offset: 0
+  use_image_obs: False
   wrappers:
     robomimic_lowdim:
       normalization_path: ${normalization_path}
@@ -75,7 +76,7 @@ env:
     robot0_eef_quat: 4
     robot0_gripper_qpos: 2
     object: 14
-  control_obs: False # Whether to include controller state in observation.
+  control_obs: True # Whether to include controller state in observation.
   simple_reset: False # if True, always reset to same initial state.
 
 policy:

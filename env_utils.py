@@ -16,7 +16,8 @@ import robomimic.utils.obs_utils as ObsUtils
 
 
 def make_robomimic_env(
-	render=False, 
+	render=False,
+	use_image_obs=False,
 	env='square', 
 	wrappers=None,
 	# normalization_path=None, 
@@ -48,7 +49,10 @@ def make_robomimic_env(
 	if obs_modality_dict["rgb"] is None:
 		obs_modality_dict.pop("rgb")
 	ObsUtils.initialize_obs_modality_mapping_from_dict(obs_modality_dict)
-	robomimic_env_cfg_path = f'{dppo_path}/cfg/robomimic/env_meta/{env}.json'
+	if "robomimic_lowdim" in wrappers:
+		robomimic_env_cfg_path = f'{dppo_path}/cfg/robomimic/env_meta/{env}.json'
+	else:
+		robomimic_env_cfg_path = f'{dppo_path}/cfg/robomimic/env_meta/{env}-img.json'
 	with open(robomimic_env_cfg_path, "r") as f:
 		env_meta = json.load(f)
 	env_meta["reward_shaping"] = False
@@ -70,15 +74,14 @@ def make_robomimic_env(
 	env_meta["env_kwargs"]["controller_configs"]["kp_limits"] = controller_configs["kp_limits"]
 	env_meta["env_kwargs"]["controller_configs"]["damping"] = controller_configs["damping"]
 	env_meta["env_kwargs"]["controller_configs"]["damping_limits"] = controller_configs["damping_limits"]
-	# TODO: Exposing controller config parameters to robomimic env for normalization purposes.
-	# TODO: this does not work well with image yet.
-	# wrappers.robomimic_lowdim["controller_configs"] = env_meta["env_kwargs"]["controller_configs"]
 
+	if render or use_image_obs:
+		os.environ["MUJOCO_GL"] = "egl"
 	env = EnvUtils.create_env_from_metadata(
 		env_meta=env_meta,
 		render=False,
 		render_offscreen=render,
-		use_image_obs=False,
+		use_image_obs=use_image_obs,
 	)
 	env.env.hard_reset = False
 	for wrapper, args in wrappers.items():
@@ -170,11 +173,13 @@ class ObservationWrapperRobomimic(gym.Env):
 		self,
 		env,
 		reward_offset=1,
+		use_image_obs=False,
 	):
 		self.env = env
 		self.action_space = env.action_space
 		self.observation_space = env.observation_space
 		self.reward_offset = reward_offset
+		self.use_image_obs = use_image_obs
 
 	def seed(self, seed=None):
 		if seed is not None:
@@ -188,13 +193,21 @@ class ObservationWrapperRobomimic(gym.Env):
 		if new_seed is not None:
 			self.seed(seed=new_seed)
 		raw_obs = self.env.reset()
-		obs = raw_obs['state'].flatten()
+
+		if self.use_image_obs:
+			obs = raw_obs
+		else:
+			obs = raw_obs['state'].flatten()
 		return obs
 
 	def step(self, action):
 		raw_obs, reward, done, info = self.env.step(action)
 		reward = (reward - self.reward_offset)
-		obs = raw_obs['state'].flatten()
+
+		if self.use_image_obs:
+			obs = raw_obs
+		else:
+			obs = raw_obs['state'].flatten()
 		return obs, reward, done, info
 
 	def render(self, **kwargs):
@@ -261,13 +274,24 @@ class ActionChunkWrapper(gymnasium.Env):
 		# 	high=np.ones(cfg.obs_dim),
 		# 	dtype=np.float32
 		# )
-		# TODO: need to manually make this, becuase sb3 buffer requries np.float32
-		# self.observation_space = self.env.observation_space["state"]
-		self.observation_space = spaces.Box(
-			low=self.env.observation_space["state"].low,
-			high=self.env.observation_space["state"].high,
-			dtype=np.float32
-		)
+
+		# NOTE: this is ugly, because state-based does not use dict obsservation space, but image-based does.
+		# NOTE: this also converts action and obs spaces from gym.spaces to gymnasium.spaces - necessary for SB3 compatibility.
+		if cfg.env.use_image_obs:
+			# self.observation_space = self.env.observation_space
+			self.observation_space = spaces.Dict({
+				key: spaces.Box(
+					low=self.env.observation_space.spaces[key].low,
+					high=self.env.observation_space.spaces[key].high,
+					dtype=self.env.observation_space.spaces[key].dtype
+				) for key in self.env.observation_space.spaces
+			})
+		else:
+			self.observation_space = spaces.Box(
+				low=self.env.observation_space["state"].low,
+				high=self.env.observation_space["state"].high,
+				dtype=np.float32
+			)
 		self.count = 0
 
 	def reset(self, seed=None):
@@ -354,8 +378,8 @@ class DiffusionPolicyEnvWrapper(VecEnvWrapper):
 		return obs_out.detach().cpu().numpy()
 
 class LiftEvalWrapper(ObservationWrapperRobomimic):
-	def __init__(self, env, reward_offset=1, simple_reset=False):
-		super().__init__(env, reward_offset=reward_offset)
+	def __init__(self, env, reward_offset=1, simple_reset=False, use_image_obs=False):
+		super().__init__(env, reward_offset=reward_offset, use_image_obs=use_image_obs)
 		self.subgoals = ['reach', 'grasp', 'success']
 		self.simple_reset = simple_reset
 
@@ -367,9 +391,7 @@ class LiftEvalWrapper(ObservationWrapperRobomimic):
     
     # only overriding step to extract subgoal information
 	def step(self, action):
-		raw_obs, reward, done, info = self.env.step(action)
-		reward = (reward - self.reward_offset)
-		obs = raw_obs['state'].flatten()
+		obs, reward, done, info = super().step(action)
 
 		lift_env = self.env.env.env
 		# Check reach
@@ -391,8 +413,8 @@ class LiftEvalWrapper(ObservationWrapperRobomimic):
 		return obs, reward, done, info
 
 class CanEvalWrapper(ObservationWrapperRobomimic):
-	def __init__(self, env, reward_offset=1, simple_reset=False):
-		super().__init__(env, reward_offset=reward_offset)
+	def __init__(self, env, reward_offset=1, simple_reset=False, use_image_obs=False):
+		super().__init__(env, reward_offset=reward_offset, use_image_obs=use_image_obs)
 		self.subgoals = ['reach', 'grasp', 'hover', 'success']
 		self.simple_reset = simple_reset
 		if self.simple_reset:
@@ -409,9 +431,7 @@ class CanEvalWrapper(ObservationWrapperRobomimic):
 
 	# only overriding step to extract subgoal information
 	def step(self, action):
-		raw_obs, reward, done, info = self.env.step(action)
-		reward = (reward - self.reward_offset)
-		obs = raw_obs['state'].flatten()
+		obs, reward, done, info = super().step(action)
 
 		can_env = self.env.env.env
 		can_obj = can_env.objects[can_env.object_id]
@@ -445,8 +465,8 @@ class CanEvalWrapper(ObservationWrapperRobomimic):
 		return obs, reward, done, info
 
 class SquareEvalWrapper(ObservationWrapperRobomimic):
-	def __init__(self, env, reward_offset=1, simple_reset=False):
-		super().__init__(env, reward_offset=reward_offset)
+	def __init__(self, env, reward_offset=1, simple_reset=False, use_image_obs=False):
+		super().__init__(env, reward_offset=reward_offset, use_image_obs=use_image_obs)
 		self.subgoals = ['reach', 'grasp', 'hover', 'success']
 		self.simple_reset = simple_reset
 		# TODO: will probably have to manually override placement initializer
@@ -458,9 +478,7 @@ class SquareEvalWrapper(ObservationWrapperRobomimic):
 	
 	# only overriding step to extract subgoal information
 	def step(self, action):
-		raw_obs, reward, done, info = self.env.step(action)
-		reward = (reward - self.reward_offset)
-		obs = raw_obs['state'].flatten()
+		obs, reward, done, info = super().step(action)
 
 		square_env = self.env.env.env
 		nut_obj = square_env.nuts[square_env.nut_id]

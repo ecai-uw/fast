@@ -22,6 +22,15 @@ elif [ "$TASK" == "robomimic_square" ]; then
     COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_square.yaml"
 elif [ "$TASK" == "robomimic_transport" ]; then
     COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_transport.yaml"
+# Image-based tasks.
+elif [ "$TASK" == "robomimic_lift_img" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_lift_img.yaml"
+elif [ "$TASK" == "robomimic_can_img" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_can_img.yaml"
+elif [ "$TASK" == "robomimic_square_img" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_square_img.yaml"
+elif [ "$TASK" == "robomimic_transport_img" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_transport_img.yaml"
 else
     echo "Unknown task type: $TASK"
     exit 1

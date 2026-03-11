@@ -17,13 +17,10 @@ import sys
 sys.path.append('./dppo')
  
 from stable_baselines3 import FAST
-from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from env_utils import (
-    DiffusionPolicyEnvWrapper,
     ResidualPolicyWrapper,
-    ObservationWrapperRobomimic, 
     ObservationWrapperGym, 
     ActionChunkWrapper, 
     make_robomimic_env, 
@@ -32,11 +29,6 @@ from env_utils import (
 )
 from utils import (
     load_base_policy, 
-    load_offline_data, 
-    collect_initial_rollouts, 
-    LoggingCallback, 
-    visualize_base_value, 
-    plot_data_with_frames, 
     flatten_wandb_cfg,
     plot_metric_frames,
     plot_rollout_with_metrics,
@@ -87,7 +79,10 @@ def main(cfg: OmegaConf):
 
     # If evaluating base policy, update run dir.
     if eval_cfg.eval_base:
-        cfg.run_dir = f"./logs/{cfg.env_name}_base_eval"
+        if cfg.env.use_image_obs:
+            cfg.run_dir = f"./logs/{cfg.env_name}_img_base_eval"
+        else:
+            cfg.run_dir = f"./logs/{cfg.env_name}_base_eval"
 
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
@@ -102,7 +97,8 @@ def main(cfg: OmegaConf):
             env = ObservationWrapperGym(env, cfg.normalization_path)
         elif cfg.env_name in ['lift', 'can', 'square', 'transport']:
             env = make_robomimic_env(
-                render=True, 
+                render=True,
+                use_image_obs=cfg.env.use_image_obs,
                 env=cfg.env_name, 
                 wrappers=cfg.env.wrappers,
                 # normalization_path=cfg.normalization_path, 
@@ -115,13 +111,14 @@ def main(cfg: OmegaConf):
                 simple_reset = cfg.env.simple_reset
             else:
                 simple_reset = False
-            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset, simple_reset=simple_reset)
+            env = eval_wrapper_dict[cfg.env_name](env, reward_offset=cfg.env.reward_offset, simple_reset=simple_reset, use_image_obs=cfg.env.use_image_obs)
         env = ResidualPolicyWrapper(env, cfg, full_render=True)
         env = ActionChunkWrapper(env, cfg, max_episode_steps=cfg.env.max_episode_steps)
         return env
 
-    env = make_env()
-    breakpoint()
+    # env = make_env()
+    # obs = env.reset()
+    # breakpoint()
 
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)
     env.seed(cfg.seed + 1)
@@ -162,12 +159,22 @@ def main(cfg: OmegaConf):
             post_linear_modules=base_post_linear_modules,
             n_critics=cfg.base.n_critics,
         )
+
+        # Setting policy type based on environment type.
+        if cfg.env.use_image_obs:
+            policy_type = "MultiInputPolicy"
+            buffer_size = 200000 # smaller buffer size
+        else:
+            policy_type = "MlpPolicy"
+            buffer_size = 20000000
         model = FAST(
-            "MlpPolicy",
+            # "MlpPolicy",
+            policy_type,
             env,
             base_kwargs,
             learning_rate=cfg.train.actor_lr,
-            buffer_size=20000000,      # Replay buffer size
+            # buffer_size=20000000,      # Replay buffer size
+            buffer_size=buffer_size,
             learning_starts=1,    # How many steps before learning starts (total steps for all env combined)
             batch_size=cfg.train.batch_size,
             tau=cfg.train.tau,                # Target network update rate
@@ -222,7 +229,10 @@ def main(cfg: OmegaConf):
         rollout_ee_forces_unchunked = []
         rollout_ee_torques_unchunked = []
         rollout_actions = [] # Can't un-chunk for q values.
-        rollout_observations = [] # Can't un-chunk for q values.
+        if cfg.env.use_image_obs:
+            rollout_observations = {key: [] for key in eval_env.observation_space.spaces.keys()}
+        else:
+            rollout_observations = [] # Can't un-chunk for q values.
 
         # Initializing aggregated evaluation metrics.
         ee_force_arr = []
@@ -234,7 +244,7 @@ def main(cfg: OmegaConf):
         # Running evaluation episodes.
         for i in range(eval_episodes):
             obs = eval_env.reset()
-
+            
             # Initializing per-episode rollout metrics.
             ee_force_arr_i = []
             ee_torque_arr_i = []
@@ -292,7 +302,13 @@ def main(cfg: OmegaConf):
                         for env_i in range(num_env_eval)
                     ])
                     rollout_actions.append(np.expand_dims(action, 1))
-                    rollout_observations.append(np.expand_dims(obs, 1))
+                    # TODO: this needs to be fixed later to accomodate dict obs
+                    # rollout_observations.append(np.expand_dims(obs, 1))
+                    if cfg.env.use_image_obs:
+                        for key in eval_env.observation_space.spaces.keys():
+                            rollout_observations[key].append(np.expand_dims(obs[key], 1))
+                    else:
+                        rollout_observations.append(np.expand_dims(obs, 1))
 
                 # Ugly manual check for subgoal success info.
                 chunk_info = [info_dict["chunk_info"] for info_dict in info]
@@ -407,10 +423,17 @@ def main(cfg: OmegaConf):
                 axis=-1
             )
 
+            rollout_actions = np.concatenate(rollout_actions, axis=1)
+            if cfg.env.use_image_obs:
+                rollout_observations = {
+                    key: np.concatenate(rollout_observations[key], axis=1)
+                    for key in rollout_observations.keys()
+                }
+            else:
+                rollout_observations = np.concatenate(rollout_observations, axis=1)
+
             if not cfg.eval.eval_base:
                 # Only need to compute Q values for non base-policy.
-                rollout_actions = np.concatenate(rollout_actions, axis=1)
-                rollout_observations = np.concatenate(rollout_observations, axis=1)
                 rollout_qs = []
                 rollout_vs = []
                 for t in tqdm(range(rollout_actions.shape[1])):
@@ -481,9 +504,27 @@ def main(cfg: OmegaConf):
                     failures_plotted += 1
 
                 rollout_vid_frames_unchunked_i = [Image.fromarray(f) for f in rollout_frames_unchunked[env_i, ...]]
+                
+                # For image obs, also plot the obs images alongside the metrics.
+                if cfg.env.use_image_obs:
+                    rollout_observations_i = np.transpose(
+                        np.repeat(
+                            rollout_observations["rgb"][env_i, ...],
+                            model.diffusion_act_chunk, axis=0
+                        ),
+                        (0, 2, 3, 1)
+                    )
+                    rollout_observations_i = [Image.fromarray(obs.astype(np.uint8)).resize((256, 256)) for obs in rollout_observations_i]
+
                 rollout_subgoal_times_i = {
                     k: v[env_i] for k, v in rollout_subgoal_times.items()
                 }
+
+                # Cutting off rollout observation frames after success.
+                final_subgoal_time = max(rollout_subgoal_times_i.values())
+                num_frames = int(min(len(rollout_observations_i), final_subgoal_time + 1))
+                rollout_observations_i = rollout_observations_i[:num_frames]
+
                 # Plotting metrics across rollouts.
                 delta_pos_i_plots = plot_metric_frames(
                     data_dict={"delta": rollout_delta_pos_norms_unchunked[env_i, ...]},
@@ -524,6 +565,9 @@ def main(cfg: OmegaConf):
                     # ee_torque_i_plots,
                     q_i_plots,
                 ]
+                breakpoint()
+                if cfg.env.use_image_obs:
+                    metric_plot_list = [rollout_observations_i] + metric_plot_list
                 rollout_metric_frames_i = plot_rollout_with_metrics(rollout_vid_frames_unchunked_i, metric_plot_list)
                 rollout_metric_frames_i[0].save(
                     f"{log_dir}/rollout_{tag}_metrics.gif",

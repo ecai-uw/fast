@@ -4,17 +4,14 @@ hydra:
   run:  
     dir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 
-name: robomimic_lift_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+name: robomimic_can_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
 dppo_path: ./dppo
-# base_policy_path: ./dppo/log/robomimic-pretrain/lift/lift_pre_diffusion_mlp_ta4_td20/2024-06-28_14-47-58/checkpoint/state_5000.pt
-# offline_data_path: ./dppo/data/robomimic/lift/train.npz
-# normalization_path: ./dppo/log/robomimic/${env_name}/normalization.npz
-base_policy_path: ./dppo/log/robomimic-pretrain/lift/lift_pre_diffusion_mlp_ta4_td20/multi-human/checkpoint/state_3000.pt
-base_stats_path: ./dppo/log/robomimic-pretrain/lift/lift_pre_diffusion_mlp_ta4_td20/multi-human/base_stats.txt
-offline_data_path: ./dppo/data/robomimic/lift/train.npz
-normalization_path: ./dppo/data/robomimic/lift/normalization.npz
+base_policy_path: ./dppo/log/robomimic-pretrain/can_img/can_pre_diffusion_mlp_img_ta4_td100/multi-human-dppo/checkpoint/state_5000.pt
+base_stats_path: ./dppo/log/robomimic-pretrain/can_img/can_pre_diffusion_mlp_img_ta4_td100/multi-human-dppo/base_stats.txt
+offline_data_path: ./dppo/data/robomimic/can-img/train.npz
+normalization_path: ./dppo/data/robomimic/can-img/normalization.npz
 
 use_wandb: True # Kind of legacy parameter, eventually just remove this and always use wandb.
 resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
@@ -22,7 +19,7 @@ wandb:
   project: fast
   # run: ${now:%H-%M-%S}_${name}
   # name: ${name}
-  group: robomimic-lift
+  group: robomimic-can
   id: null # if resume is true, this must be provided.
   save_id_local_path: null # relative path to log_dir to save wandb run id - helpful for slurm pre-emption.
 
@@ -30,13 +27,14 @@ algorithm: fast # options are: dsrl_na, dsrl_sac
 
 seed: 1
 device: cuda:0
-env_name: lift
+env_name: can
 log_dir: ./logs 
-obs_dim: 19
-action_dim: 7
+obs_dim: 9
+action_dim: 7 # this is base action dim!
 cond_steps: 1
-act_steps: 4 
-load_offline_data: True # if true, load offline demonstration data into replay buffer
+img_cond_steps: 1
+act_steps: 4 # action chunk size of base policy
+load_offline_data: False # if true, load offline demonstration data into replay buffer
 deterministic_eval: True # if true, run eval with both deterministic actions, as well as stochastic
 debug_gradients: False # if true, log gradient norms and values for debugging
 
@@ -46,23 +44,33 @@ num_evals: 200
 save_model_interval: 10000
 save_replay_buffer: True
 
+shape_meta:
+  obs:
+    rgb:
+      shape: [3, 96, 96]
+    state:
+      shape: [9]
+  action: 
+    shape: [7]
+
 env:
   n_envs:  4
-  n_eval_envs: 25
+  n_eval_envs: 20 # reduce gpu usgae # 25
   name: ${env_name}
   max_episode_steps: 300
   reset_at_iteration: False
   save_video: False
   best_reward_threshold_for_success: 1 
   reward_offset: 0
-  use_image_obs: False
+  use_image_obs: True
   wrappers:
-    robomimic_lowdim:
+    robomimic_image:
       normalization_path: ${normalization_path}
       low_dim_keys: ['robot0_eef_pos',
                     'robot0_eef_quat',
-                    'robot0_gripper_qpos',
-                    'object'] # same order of preprocessed observations
+                    'robot0_gripper_qpos'] # same order of preprocessed observations
+      image_keys: ['robot0_eye_in_hand_image']
+      shape_meta: ${shape_meta}
       impedance_mode: ${policy.impedance_mode} # fixed, variable, variable_kp
       control_obs: ${env.control_obs}
       controller_configs: ${controller}
@@ -75,7 +83,7 @@ env:
     robot0_eef_pos: 3
     robot0_eef_quat: 4
     robot0_gripper_qpos: 2
-    object: 10
+    # object: 14
   control_obs: True # Whether to include controller state in observation.
   simple_reset: False # if True, always reset to same initial state.
 
@@ -92,10 +100,10 @@ policy:
   gains_mag: 0.2 # Max. magnitude to clamp gain residuals.
   # residual_sample_schedule: ... # Frequency of sampling residual actions during training.
   drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
-  jumpstart: null # (null, random, curriculum) Whether to roll-in the base policy (implementation 2).  jumpstart_n: 10 # Number of curriculum stages.
+  jumpstart: null # (null, random, curriculum) Whether to roll-in the base policy (implementation 2).
   jumpstart_n: 10 # Number of curriculum stages.
-  jumpstart_beta: 0.05 # Tolerance threshold for jumpstart curriculum.
-  jumpstart_ma: 3 # Moving average window size for jumpstart curriculum success rate.
+  jumpstart_beta: 0.01 # Tolerance threshold for jumpstart curriculum.
+  jumpstart_ma: 5 # Moving average window size for jumpstart curriculum success rate.
   jumpstart_buffer: False # If True, also add jumpstart rollout data to replay buffer (generally should be False).
 
 train:
@@ -103,7 +111,7 @@ train:
   actor_lr: 3e-4
   batch_size: 256
   train_freq: 1 # Update model after this many environment steps
-  utd: 30 # Number of gradient steps to take per update
+  utd: 20 # Number of gradient steps to take per update
   use_layer_norm: True
   layer_size: 2048 # Layer size for actor and critic
   num_layers: 3 # Number of layers for actor and critic
@@ -140,8 +148,23 @@ model:
   randn_clip_value: 3
   network_path: ${base_policy_path}
   network:
-    _target_: model.diffusion.mlp_diffusion.DiffusionMLP
-    time_dim: 16
+    _target_: model.diffusion.mlp_diffusion.VisionDiffusionMLP
+    backbone:
+      _target_: model.common.vit.VitEncoder
+      obs_shape: ${shape_meta.obs.rgb.shape}
+      num_channel: ${eval:'3 * ${img_cond_steps}'} # each image patch is history concatenated
+      img_h: ${shape_meta.obs.rgb.shape[1]}
+      img_w: ${shape_meta.obs.rgb.shape[2]}
+      cfg:
+        patch_size: 8
+        depth: 1
+        embed_dim: 128
+        num_heads: 4
+        embed_style: embed2
+        embed_norm: 0
+    augment: False
+    spatial_emb: 128
+    time_dim: 32
     mlp_dims: [512, 512, 512]
     residual_style: True
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
@@ -150,7 +173,7 @@ model:
   horizon_steps: ${act_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
-  denoising_steps: 20
+  denoising_steps: 100
   device: ${device}
   # use_ddim: True
   # ddim_steps: 8

@@ -8,8 +8,8 @@ name: robomimic_lift_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
 dppo_path: ./dppo
-base_policy_path: ./dppo/log/robomimic-pretrain/lift_img/lift_pre_diffusion_mlp_img_ta4_td100/multi-human-dppo/checkpoint/state_5000.pt
-base_stats_path: ./dppo/log/robomimic-pretrain/lift_img/lift_pre_diffusion_mlp_img_ta4_td100/multi-human-dppo/base_stats.txt
+base_policy_path: ./dppo/log/robomimic-finetune/lift_ft_diffusion_mlp_img_ta4_td100_tdf5/multi-human-dppo/checkpoint/state_300.pt
+base_stats_path: ./dppo/log/robomimic-finetune/lift_ft_diffusion_mlp_img_ta4_td100_tdf5/multi-human-dppo/base_stats.txt
 offline_data_path: ./dppo/data/robomimic/lift-img/train.npz
 normalization_path: ./dppo/data/robomimic/lift-img/normalization.npz
 
@@ -17,8 +17,6 @@ use_wandb: True # Kind of legacy parameter, eventually just remove this and alwa
 resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
 wandb:
   project: fast
-  # run: ${now:%H-%M-%S}_${name}
-  # name: ${name}
   group: robomimic-lift
   id: null # if resume is true, this must be provided.
   save_id_local_path: null # relative path to log_dir to save wandb run id - helpful for slurm pre-emption.
@@ -55,7 +53,7 @@ shape_meta:
 
 env:
   n_envs:  4
-  n_eval_envs: 20
+  n_eval_envs: 25
   name: ${env_name}
   max_episode_steps: 300
   reset_at_iteration: False
@@ -74,16 +72,10 @@ env:
       impedance_mode: ${policy.impedance_mode} # fixed, variable, variable_kp
       control_obs: ${env.control_obs}
       controller_configs: ${controller}
-    # multi_step:
-    #   n_obs_steps: ${cond_steps}
-    #   n_action_steps: ${act_steps}
-    #   max_episode_steps: ${env.max_episode_steps}
-    #   reset_within_step: True
   observation_meta:
     robot0_eef_pos: 3
     robot0_eef_quat: 4
     robot0_gripper_qpos: 2
-    # object: 10
   control_obs: True # Whether to include controller state in observation.
   simple_reset: False # if True, always reset to same initial state.
 
@@ -98,7 +90,6 @@ policy:
   residual_mag_schedule: 50000 # Schedule for clamping residual actions.
   residual_mag: 0.2 # Max. magnitude to clamp residual predictions.
   gains_mag: 0.2 # Max. magnitude to clamp gain residuals.
-  # residual_sample_schedule: ... # Frequency of sampling residual actions during training.
   drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
   jumpstart: null # (null, random, curriculum) Whether to roll-in the base policy (implementation 2).  jumpstart_n: 10 # Number of curriculum stages.
   jumpstart_n: 10 # Number of curriculum stages.
@@ -120,7 +111,6 @@ train:
   target_ent: 0.0
   init_rollout_steps: 1501 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
   init_rollout_noise_magnitude: 0.1 # Initial noise magnitude for rollout actions
-  # action_magnitude: 1.5 # Maximum action magnitude in noise action space
   n_critics: 2 # Number of critic Q networks
   critic_backup_combine_type: min
   grad_clip_norm: 1.0 # Gradient clipping norm, or null for no clipping
@@ -142,7 +132,7 @@ base:
 
 model:
   _target_: model.diffusion.diffusion_eval.DiffusionEval
-  ft_denoising_steps: 0
+  ft_denoising_steps: 5
   predict_epsilon: True
   denoised_clip_value: 1.0
   randn_clip_value: 3
@@ -176,9 +166,8 @@ model:
   action_dim: ${action_dim}
   denoising_steps: 100
   device: ${device}
-  # use_ddim: True
-  # ddim_steps: 8
-  # controllable_noise: True
+  use_ddim: True
+  ddim_steps: 5
 
 # TODO: Controller parameters - these are manually hardcoded/copied for now.
 controller:

@@ -565,7 +565,7 @@ def main(cfg: OmegaConf):
                     # ee_torque_i_plots,
                     q_i_plots,
                 ]
-                breakpoint()
+
                 if cfg.env.use_image_obs:
                     metric_plot_list = [rollout_observations_i] + metric_plot_list
                 rollout_metric_frames_i = plot_rollout_with_metrics(rollout_vid_frames_unchunked_i, metric_plot_list)

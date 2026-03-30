@@ -1,0 +1,183 @@
+defaults:
+  - _self_
+hydra:
+  run:  
+    dir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+
+name: robomimic_lift_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+# NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
+run_dir: null # This will be manually set during training to allow for simple run resumes.
+dppo_path: ./dppo
+base_policy_path: ./dppo/log/robomimic-pretrain/lift_pre_diffusion_mlp_img_ta4_td100/proficient-human-mv/checkpoint/state_2000.pt
+base_stats_path: ./dppo/log/robomimic-pretrain/lift_pre_diffusion_mlp_img_ta4_td100/multi-human-dppo/base_stats.txt
+offline_data_path: ./dppo/data/robomimic/lift-ph-img-mv/train.npz
+normalization_path: ./dppo/data/robomimic/lift-ph-img-mv/normalization.npz
+
+use_wandb: True # Kind of legacy parameter, eventually just remove this and always use wandb.
+resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
+wandb:
+  project: fast
+  group: robomimic-lift
+  id: null # if resume is true, this must be provided.
+  save_id_local_path: null # relative path to log_dir to save wandb run id - helpful for slurm pre-emption.
+
+algorithm: fast # options are: dsrl_na, dsrl_sac
+
+seed: 1
+device: cuda:0
+env_name: lift
+log_dir: ./logs 
+obs_dim: 9
+action_dim: 7
+cond_steps: 1
+img_cond_steps: 1
+act_steps: 4 
+load_offline_data: False # if true, load offline demonstration data into replay buffer
+deterministic_eval: True # if true, run eval with both deterministic actions, as well as stochastic
+debug_gradients: False # if true, log gradient norms and values for debugging
+
+total_timesteps: 200000
+eval_interval: 500
+num_evals: 200
+save_model_interval: 10000
+save_replay_buffer: True
+
+shape_meta:
+  obs:
+    rgb:
+      shape: [6, 96, 96]
+    state:
+      shape: [9]
+  action: 
+    shape: [7]
+
+env:
+  n_envs:  4
+  n_eval_envs: 25
+  name: ${env_name}
+  max_episode_steps: 300
+  reset_at_iteration: False
+  save_video: False
+  best_reward_threshold_for_success: 1 
+  reward_offset: 0
+  use_image_obs: True
+  wrappers:
+    robomimic_image:
+      normalization_path: ${normalization_path}
+      low_dim_keys: ['robot0_eef_pos',
+                    'robot0_eef_quat',
+                    'robot0_gripper_qpos'] # same order of preprocessed observations
+      image_keys: ['agentview_image', 'robot0_eye_in_hand_image']
+      shape_meta: ${shape_meta}
+      impedance_mode: ${policy.impedance_mode} # fixed, variable, variable_kp
+      control_obs: ${env.control_obs}
+      controller_configs: ${controller}
+  observation_meta:
+    robot0_eef_pos: 3
+    robot0_eef_quat: 4
+    robot0_gripper_qpos: 2
+  control_obs: True # Whether to include controller state in observation.
+  simple_reset: False # if True, always reset to same initial state.
+
+policy:
+  type: residual # residual, residual_scale, residual_force, residual_scale2, residual_force2
+  impedance_mode: fixed # fixed, variable, variable_kp
+  gains_only: False # Whether to only predict gains (for variable impedance modes).
+  smooth_gain_lambda: 0.0 # Weight for action smoothing loss.
+  action_condition: True # Whether to condition policy on base action.
+  shape_rewards: False # Whether to use PBRS from base policy values.
+  # base_gradient_steps: 0 # Number of gradient steps to take on base critic/value per update. If -1, same as utd. If 0, no updates.
+  residual_mag_schedule: 50000 # Schedule for clamping residual actions.
+  residual_mag: 0.2 # Max. magnitude to clamp residual predictions.
+  gains_mag: 0.2 # Max. magnitude to clamp gain residuals.
+  # drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
+  jumpstart: null # (null, random, curriculum) Whether to roll-in the base policy (implementation 2).  jumpstart_n: 10 # Number of curriculum stages.
+  jumpstart_n: 10 # Number of curriculum stages.
+  jumpstart_beta: 0.01 # Tolerance threshold for jumpstart curriculum.
+  jumpstart_ma: 5 # Moving average window size for jumpstart curriculum success rate.
+  jumpstart_buffer: False # If True, also add jumpstart rollout data to replay buffer (generally should be False).
+
+train:
+  tau: 0.005 # Target update rate
+  actor_lr: 3e-4
+  batch_size: 256
+  train_freq: 1 # Update model after this many environment steps
+  utd: 30 # Number of gradient steps to take per update
+  use_layer_norm: True
+  layer_size: 2048 # Layer size for actor and critic
+  num_layers: 3 # Number of layers for actor and critic
+  discount: 0.95
+  ent_coef: -1
+  target_ent: 0.0
+  init_rollout_steps: 1501 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
+  init_rollout_noise_magnitude: 0.1 # Initial noise magnitude for rollout actions
+  n_critics: 2 # Number of critic Q networks
+  critic_backup_combine_type: min
+  grad_clip_norm: 1.0 # Gradient clipping norm, or null for no clipping
+
+# base:
+#   tau: 0.005 # Target update rate
+#   lr: 3e-4
+#   fqe_steps: 5000
+#   vd_steps: 5000
+#   vd_samples: 16
+#   # lr_scheduler: cosine # Options: constant, linear, cosine
+#   batch_size: 256
+#   use_layer_norm: ${train.use_layer_norm}
+#   layer_size: ${train.layer_size}
+#   num_layers: ${train.num_layers}
+#   discount: 0.99
+#   n_critics: ${train.n_critics}
+#   critic_backup_combine_type: ${train.critic_backup_combine_type}
+
+model:
+  _target_: model.diffusion.diffusion_eval.DiffusionEval
+  ft_denoising_steps: 0
+  predict_epsilon: True
+  denoised_clip_value: 1.0
+  randn_clip_value: 3
+  network_path: ${base_policy_path}
+  network:
+    _target_: model.diffusion.mlp_diffusion.VisionDiffusionMLP
+    backbone:
+      _target_: model.common.vit.VitEncoder
+      obs_shape: ${shape_meta.obs.rgb.shape}
+      num_channel: ${eval:'3 * ${img_cond_steps}'} # each image patch is history concatenated
+      img_h: ${shape_meta.obs.rgb.shape[1]}
+      img_w: ${shape_meta.obs.rgb.shape[2]}
+      cfg:
+        patch_size: 8
+        depth: 1
+        embed_dim: 128
+        num_heads: 4
+        embed_style: embed2
+        embed_norm: 0
+    num_img: 2
+    augment: False
+    spatial_emb: 128
+    time_dim: 32
+    mlp_dims: [512, 512, 512]
+    residual_style: True
+    img_cond_steps: ${img_cond_steps}
+    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${act_steps}
+    action_dim: ${action_dim}
+  horizon_steps: ${act_steps}
+  obs_dim: ${obs_dim}
+  action_dim: ${action_dim}
+  denoising_steps: 100
+  device: ${device}
+  use_ddim: True
+  ddim_steps: 5
+
+# TODO: Controller parameters - these are manually hardcoded/copied for now.
+controller:
+  damping: 1.0
+  damping_limits: [0.0, 10.0]
+  impedance_mode: ${policy.impedance_mode} # fixed, variable, variable_kp
+  kp: 150.0
+  kp_limits: [0.0, 1500.0] # TODO: for now, the 1500 is hardcoded from the make_robomimic_env helper function.
+
+eval:
+  eval_base: False # Whether to eval the base policy alone.
+  save_video: True

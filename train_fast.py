@@ -1,4 +1,5 @@
 import os
+import sys
 import warnings
 warnings.filterwarnings("ignore")
 import math
@@ -13,7 +14,6 @@ from hydra.core.hydra_config import HydraConfig # used to parse command override
 from omegaconf import OmegaConf
 import gym, d4rl
 import d4rl.gym_mujoco
-import sys
 sys.path.append('./dppo')
  
 from stable_baselines3 import SAC, DSRL, FAST
@@ -29,10 +29,10 @@ from env_utils import (
     subgoal_list_dict,
 )
 from utils import (
-    load_base_policy, 
-    load_offline_data, 
-    collect_initial_rollouts, 
-    LoggingCallback, 
+    load_base_policy,
+    load_offline_data,
+    collect_initial_rollouts,
+    LoggingCallback,
     flatten_wandb_cfg,
 )
 
@@ -41,8 +41,6 @@ OmegaConf.register_new_resolver("round_up", math.ceil)
 OmegaConf.register_new_resolver("round_down", math.floor)
 
 base_path = os.path.dirname(os.path.abspath(__file__))
-
-	
 
 
 @hydra.main(
@@ -181,20 +179,6 @@ def main(cfg: OmegaConf):
             n_critics=cfg.train.n_critics,
         )
 
-        # TODO: clean up; this code block is a little redundant with above, refactor later
-        base_post_linear_modules = None
-        if cfg.base.use_layer_norm:
-            base_post_linear_modules = [torch.nn.LayerNorm]
-        base_net_arch = []
-        for _ in range(cfg.base.num_layers):
-            base_net_arch.append(cfg.base.layer_size)
-        base_kwargs = dict(
-            net_arch=base_net_arch,
-            activation_fn=torch.nn.Tanh,
-            post_linear_modules=base_post_linear_modules,
-            n_critics=cfg.base.n_critics,
-        )
-
         # Setting policy type based on environment type.
         if cfg.env.use_image_obs:
             policy_type = "MultiInputPolicy"
@@ -206,7 +190,6 @@ def main(cfg: OmegaConf):
             # "MlpPolicy",
             policy_type,
             env,
-            base_kwargs,
             learning_rate=cfg.train.actor_lr,
             # buffer_size=20000000,      # Replay buffer size
             buffer_size=buffer_size,
@@ -223,13 +206,11 @@ def main(cfg: OmegaConf):
             target_entropy="auto" if cfg.train.target_ent == -1 else cfg.train.target_ent,    # Automatic target entropy
             use_sde=False,
             sde_sample_freq=-1,
-            # tensorboard_log=cfg.logdir,
             tensorboard_log=None, # Disabling tensorboard logging, since we use WandB.
             verbose=1,
             policy_kwargs=policy_kwargs,
             diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
             critic_backup_combine_type=cfg.train.critic_backup_combine_type,
-            base_gamma=cfg.base.discount,
             cfg=cfg,
         )
 
@@ -284,18 +265,6 @@ def main(cfg: OmegaConf):
         if cfg.train.init_rollout_steps > 0:
             collect_initial_rollouts(model, env, cfg.train.init_rollout_steps, cfg)	
             logging_callback.set_timesteps(cfg.train.init_rollout_steps * num_env)
-
-        # ...and train base Q and V functions.
-        # SKIPPING THIS FOR NOW.
-        # model.train_base_value(
-        #     fqe_steps=cfg.base.fqe_steps,
-        #     vd_steps=cfg.base.vd_steps,
-        #     batch_size=cfg.base.batch_size,
-        #     vd_samples=cfg.base.vd_samples,
-        #     pre_train=True,
-        #     replay_data=None,
-        #     # lr_scheduler=cfg.base.lr_scheduler,
-        # )
 
     # Train the agent.
     callbacks = [checkpoint_callback, logging_callback]

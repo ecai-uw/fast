@@ -34,13 +34,22 @@ Remove the `-n` flag to turn off dry-run.
 
 ## Step 3: Copy Code to Cluster
 ```
-rsync -avPn --exclude="wandb/*" --exclude="logs/*" --exclude=".git/*" /project/dir/ user@cluster:/desired/project/location
+rsync -avPn --exclude="wandb/*" --exclude="logs/*" --exclude="debug/*" --exclude=".git/*" /project/dir/ user@cluster:/desired/project/location
 ```
 What I run for this project for Klone:
 ```
-rsync -avPn --exclude="wandb/*" --exclude="logs/*" --exclude=".git/*" ~/fast/ ecai0608@klone.hyak.uw.edu:/gscratch/weirdlab/ecai0608/fast_project/fast/
+rsync -avPn --exclude="wandb/*" --exclude="logs/*" --exclude=".git/*" --exclude="debug/*" ~/fast/ ecai0608@klone.hyak.uw.edu:/gscratch/weirdlab/ecai0608/fast_project/fast/
 ```
 and for Tillicum:
 ```
-rsync -avPn --exclude="wandb/*" --exclude="logs/*" --exclude=".git/*" ~/fast/ ecai0608@tillicum.hyak.uw.edu:/gpfs/scrubbed/ecai0608/fast_project/fast/
+rsync -avPn --exclude="wandb/*" --exclude="logs/*" --exclude=".git/*" --exclude="debug/*" ~/fast/ ecai0608@tillicum.hyak.uw.edu:/gpfs/scrubbed/ecai0608/fast_project/fast/
 ```
+
+
+sbatch scripts/launch_tillicum.slurm online robomimic_can policy.type=residual policy.shape_rewards=True
+
+sbatch scripts/launch_tillicum.slurm online policy.type=residual policy.shape_rewards=True policy.residual_mag=1.0 policy.base_gradient_steps=-1
+
+sbatch scripts/launch_tillicum.slurm online policy.type=residual_scale2 policy.shape_rewards=True policy.residual_mag=1.0 policy.base_gradient_steps=-1
+
+sbatch scripts/launch_tillicum.slurm online policy.type=residual_force2 policy.shape_rewards=True policy.residual_mag=1.0 policy.base_gradient_steps=-1

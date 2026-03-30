@@ -1,4 +1,5 @@
 import os
+import sys
 import warnings
 warnings.filterwarnings("ignore")
 import math
@@ -13,7 +14,6 @@ from hydra.core.hydra_config import HydraConfig # used to parse command override
 from omegaconf import OmegaConf
 import gym, d4rl
 import d4rl.gym_mujoco
-import sys
 sys.path.append('./dppo')
  
 from stable_baselines3 import FAST
@@ -28,7 +28,7 @@ from env_utils import (
     subgoal_list_dict
 )
 from utils import (
-    load_base_policy, 
+    load_base_policy,
     flatten_wandb_cfg,
     plot_metric_frames,
     plot_rollout_with_metrics,
@@ -146,20 +146,6 @@ def main(cfg: OmegaConf):
             n_critics=cfg.train.n_critics,
         )
 
-        # TODO: clean up; this code block is a little redundant with above, refactor later
-        base_post_linear_modules = None
-        if cfg.base.use_layer_norm:
-            base_post_linear_modules = [torch.nn.LayerNorm]
-        base_net_arch = []
-        for _ in range(cfg.base.num_layers):
-            base_net_arch.append(cfg.base.layer_size)
-        base_kwargs = dict(
-            net_arch=base_net_arch,
-            activation_fn=torch.nn.Tanh,
-            post_linear_modules=base_post_linear_modules,
-            n_critics=cfg.base.n_critics,
-        )
-
         # Setting policy type based on environment type.
         if cfg.env.use_image_obs:
             policy_type = "MultiInputPolicy"
@@ -171,7 +157,6 @@ def main(cfg: OmegaConf):
             # "MlpPolicy",
             policy_type,
             env,
-            base_kwargs,
             learning_rate=cfg.train.actor_lr,
             # buffer_size=20000000,      # Replay buffer size
             buffer_size=buffer_size,
@@ -188,16 +173,11 @@ def main(cfg: OmegaConf):
             target_entropy="auto" if cfg.train.target_ent == -1 else cfg.train.target_ent,    # Automatic target entropy
             use_sde=False,
             sde_sample_freq=-1,
-            # tensorboard_log=cfg.logdir,
             tensorboard_log=None, # Disabling tensorboard logging, since we use WandB.
             verbose=1,
             policy_kwargs=policy_kwargs,
             diffusion_act_dim=(cfg.act_steps, cfg.action_dim),
             critic_backup_combine_type=cfg.train.critic_backup_combine_type,
-            base_gamma=cfg.base.discount,
-            # base_gradient_steps=cfg.policy.base_gradient_steps,
-            # policy_action_condition=cfg.policy.action_condition,
-            # shape_rewards=cfg.policy.shape_rewards,
             cfg=cfg,
         )
 
@@ -505,25 +485,64 @@ def main(cfg: OmegaConf):
 
                 rollout_vid_frames_unchunked_i = [Image.fromarray(f) for f in rollout_frames_unchunked[env_i, ...]]
                 
-                # For image obs, also plot the obs images alongside the metrics.
-                if cfg.env.use_image_obs:
-                    rollout_observations_i = np.transpose(
-                        np.repeat(
-                            rollout_observations["rgb"][env_i, ...],
-                            model.diffusion_act_chunk, axis=0
-                        ),
-                        (0, 2, 3, 1)
-                    )
-                    rollout_observations_i = [Image.fromarray(obs.astype(np.uint8)).resize((256, 256)) for obs in rollout_observations_i]
-
+                # Grabbing subgoal times for vertical plot lines.
                 rollout_subgoal_times_i = {
                     k: v[env_i] for k, v in rollout_subgoal_times.items()
                 }
+                final_subgoal_time = max(rollout_subgoal_times_i.values())
+                num_frames = int(min(cfg.env.max_episode_steps, final_subgoal_time + 1))
+
+                # For image obs, also plot the obs images alongside the metrics.
+                if cfg.env.use_image_obs:
+                    num_img = model.diffusion_policy.base_policy.network.num_img
+                    if num_img == 1:
+                        rollout_observations_i = np.transpose(
+                            np.repeat(
+                                rollout_observations["rgb"][env_i, ...],
+                                model.diffusion_act_chunk, axis=0
+                            ),
+                            (0, 2, 3, 1)
+                        )[:num_frames]
+                        rollout_observations_i = [
+                            [Image.fromarray(obs.astype(np.uint8)).resize((256, 256)) for obs in rollout_observations_i]
+                        ]
+                    elif num_img == 2:
+                        rollout_observations_agentview_i = np.transpose(
+                            np.repeat(
+                                rollout_observations["rgb"][env_i, :, 0:3, ...],
+                                model.diffusion_act_chunk, axis=0
+                            ),
+                            (0, 2, 3, 1)
+                        )[:num_frames]
+                        rollout_observations_eye_in_hand_i = np.transpose(
+                            np.repeat(
+                                rollout_observations["rgb"][env_i, :, 3:6, ...],
+                                model.diffusion_act_chunk, axis=0
+                            ),
+                            (0, 2, 3, 1)
+                        )[:num_frames]
+                        rollout_observations_i = [
+                            [Image.fromarray(obs.astype(np.uint8)).resize((256, 256)) for obs in rollout_observations_agentview_i],
+                            [Image.fromarray(obs.astype(np.uint8)).resize((256, 256)) for obs in rollout_observations_eye_in_hand_i],
+                        ]
+                    else:
+                        raise NotImplementedError(f"Number of images {num_img} not supported in visualization.")
+
+                    # rollout_observations_i = np.transpose(
+                    #     np.repeat(
+                    #         rollout_observations["rgb"][env_i, ...],
+                    #         model.diffusion_act_chunk, axis=0
+                    #     ),
+                    #     (0, 2, 3, 1)
+                    # )
+                    # rollout_observations_i = [Image.fromarray(obs.astype(np.uint8)).resize((256, 256)) for obs in rollout_observations_i]
+
+                
 
                 # Cutting off rollout observation frames after success.
-                final_subgoal_time = max(rollout_subgoal_times_i.values())
-                num_frames = int(min(len(rollout_observations_i), final_subgoal_time + 1))
-                rollout_observations_i = rollout_observations_i[:num_frames]
+                # final_subgoal_time = max(rollout_subgoal_times_i.values())
+                # num_frames = int(min(len(rollout_observations_i), final_subgoal_time + 1))
+                # rollout_observations_i = rollout_observations_i[:num_frames]
 
                 # Plotting metrics across rollouts.
                 delta_pos_i_plots = plot_metric_frames(
@@ -567,7 +586,7 @@ def main(cfg: OmegaConf):
                 ]
 
                 if cfg.env.use_image_obs:
-                    metric_plot_list = [rollout_observations_i] + metric_plot_list
+                    metric_plot_list = rollout_observations_i + metric_plot_list
                 rollout_metric_frames_i = plot_rollout_with_metrics(rollout_vid_frames_unchunked_i, metric_plot_list)
                 rollout_metric_frames_i[0].save(
                     f"{log_dir}/rollout_{tag}_metrics.gif",

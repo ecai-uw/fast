@@ -8,8 +8,9 @@ name: robomimic_lift_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
 dppo_path: ./dppo
-base_policy_path: ./dppo/log/robomimic-finetune/lift_ft_diffusion_mlp_img_ta4_td100_tdf5/multi-human-dppo/checkpoint/state_300.pt
-base_stats_path: ./dppo/log/robomimic-finetune/lift_ft_diffusion_mlp_img_ta4_td100_tdf5/multi-human-dppo/base_stats.txt
+# base_policy_path: ./dppo/log/robomimic-finetune/lift_ft_diffusion_mlp_img_ta4_td100_tdf5/multi-human-dppo/checkpoint/state_50.pt
+base_policy_path: ./dppo/log/robomimic-pretrain/lift_img/lift_pre_diffusion_mlp_img_ta4_td100/multi-human-dppo/checkpoint/state_5000.pt
+base_stats_path: ./dppo/log/robomimic-pretrain/lift_img/lift_pre_diffusion_mlp_img_ta4_td100/multi-human-dppo/base_stats.txt
 offline_data_path: ./dppo/data/robomimic/lift-img/train.npz
 normalization_path: ./dppo/data/robomimic/lift-img/normalization.npz
 
@@ -86,11 +87,11 @@ policy:
   smooth_gain_lambda: 0.0 # Weight for action smoothing loss.
   action_condition: True # Whether to condition policy on base action.
   shape_rewards: False # Whether to use PBRS from base policy values.
-  base_gradient_steps: 0 # Number of gradient steps to take on base critic/value per update. If -1, same as utd. If 0, no updates.
+  # base_gradient_steps: 0 # Number of gradient steps to take on base critic/value per update. If -1, same as utd. If 0, no updates.
   residual_mag_schedule: 50000 # Schedule for clamping residual actions.
   residual_mag: 0.2 # Max. magnitude to clamp residual predictions.
   gains_mag: 0.2 # Max. magnitude to clamp gain residuals.
-  drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
+  # drop_velocity: True # Whether to drop velocity from observation for residual policy + base value.
   jumpstart: null # (null, random, curriculum) Whether to roll-in the base policy (implementation 2).  jumpstart_n: 10 # Number of curriculum stages.
   jumpstart_n: 10 # Number of curriculum stages.
   jumpstart_beta: 0.01 # Tolerance threshold for jumpstart curriculum.
@@ -115,24 +116,24 @@ train:
   critic_backup_combine_type: min
   grad_clip_norm: 1.0 # Gradient clipping norm, or null for no clipping
 
-base:
-  tau: 0.005 # Target update rate
-  lr: 3e-4
-  fqe_steps: 5000
-  vd_steps: 5000
-  vd_samples: 16
-  # lr_scheduler: cosine # Options: constant, linear, cosine
-  batch_size: 256
-  use_layer_norm: ${train.use_layer_norm}
-  layer_size: ${train.layer_size}
-  num_layers: ${train.num_layers}
-  discount: 0.99
-  n_critics: ${train.n_critics}
-  critic_backup_combine_type: ${train.critic_backup_combine_type}
+# base:
+#   tau: 0.005 # Target update rate
+#   lr: 3e-4
+#   fqe_steps: 5000
+#   vd_steps: 5000
+#   vd_samples: 16
+#   # lr_scheduler: cosine # Options: constant, linear, cosine
+#   batch_size: 256
+#   use_layer_norm: ${train.use_layer_norm}
+#   layer_size: ${train.layer_size}
+#   num_layers: ${train.num_layers}
+#   discount: 0.99
+#   n_critics: ${train.n_critics}
+#   critic_backup_combine_type: ${train.critic_backup_combine_type}
 
 model:
   _target_: model.diffusion.diffusion_eval.DiffusionEval
-  ft_denoising_steps: 5
+  ft_denoising_steps: 0
   predict_epsilon: True
   denoised_clip_value: 1.0
   randn_clip_value: 3

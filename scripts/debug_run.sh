@@ -45,9 +45,8 @@ elif [ "$METHOD" == "local-container" ]; then
     #     $COMMAND
 
     ./scripts/run.sh $CONTAINER_PATH $WANDB_MODE $TASK \
-        num_evals=2 env.n_envs=1 env.n_eval_envs=1 \
+        num_evals=2 env.n_envs=4 env.n_eval_envs=1 \
         train.init_rollout_steps=20 \
-        base.fqe_steps=50 base.vd_steps=50 \
         total_timesteps=10 \
         $COMMAND
 

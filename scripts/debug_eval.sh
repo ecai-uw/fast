@@ -8,7 +8,7 @@
 
 # Usage: scripts/debug_eval.sh [method] [task] [additional args]
 
-CONTAINER_PATH=~/containers/fast.sif
+CONTAINER_PATH=~/containers/fast_24.04.sif
 WANDB_MODE=disabled
 
 METHOD=$1
@@ -30,7 +30,7 @@ if [ "$METHOD" == "local" ]; then
 elif [ "$METHOD" == "local-container" ]; then
 
     ./scripts/eval.sh $CONTAINER_PATH $WANDB_MODE $TASK \
-        num_evals=0 env.n_envs=1 \
+        num_evals=200 env.n_envs=1 env.n_eval_envs=25 deterministic_eval=True \
         $COMMAND
 
 else

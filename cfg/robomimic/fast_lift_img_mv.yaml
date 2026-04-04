@@ -115,21 +115,6 @@ train:
   critic_backup_combine_type: min
   grad_clip_norm: 1.0 # Gradient clipping norm, or null for no clipping
 
-# base:
-#   tau: 0.005 # Target update rate
-#   lr: 3e-4
-#   fqe_steps: 5000
-#   vd_steps: 5000
-#   vd_samples: 16
-#   # lr_scheduler: cosine # Options: constant, linear, cosine
-#   batch_size: 256
-#   use_layer_norm: ${train.use_layer_norm}
-#   layer_size: ${train.layer_size}
-#   num_layers: ${train.num_layers}
-#   discount: 0.99
-#   n_critics: ${train.n_critics}
-#   critic_backup_combine_type: ${train.critic_backup_combine_type}
-
 model:
   _target_: model.diffusion.diffusion_eval.DiffusionEval
   ft_denoising_steps: 0

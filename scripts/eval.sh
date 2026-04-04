@@ -40,6 +40,15 @@ elif [ "$TASK" == "robomimic_square_img_mv" ]; then
     COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_square_img_mv.yaml"
 elif [ "$TASK" == "robomimic_transport_img_mv" ]; then
     COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_transport_img_mv.yaml"
+# Image-based multi-view tasks with depth.
+elif [ "$TASK" == "robomimic_lift_img_depth_mv" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_lift_img_depth_mv.yaml"
+elif [ "$TASK" == "robomimic_can_img_depth_mv" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_can_img_depth_mv.yaml"
+elif [ "$TASK" == "robomimic_square_img_depth_mv" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_square_img_depth_mv.yaml"
+elif [ "$TASK" == "robomimic_transport_img_depth_mv" ]; then
+    COMMAND_PREFIX="--config-path=cfg/robomimic --config-name=fast_transport_img_depth_mv.yaml"
 else
     echo "Unknown task type: $TASK"
     exit 1

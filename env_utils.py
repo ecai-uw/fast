@@ -15,6 +15,50 @@ import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.obs_utils as ObsUtils
 
 
+# Monkey-patches to add camera depth support for older versions of robomimic.
+# EnvRobosuite.__init__ hardcodes camera_depths=False, and get_observation
+# filters out non-robot-prefixed depth keys like agentview_depth.
+from robomimic.envs.env_robosuite import EnvRobosuite
+
+_original_env_robosuite_init = EnvRobosuite.__init__
+
+def _patched_env_robosuite_init(self, *args, camera_depths=False, **kwargs):
+    # Inject camera_depths into kwargs so the original init passes it to
+    # robosuite.make. The original will overwrite it with False via
+    # update_kwargs, so we sneak it back in via kwargs after update_kwargs
+    # runs but before robosuite.make — we do this by putting it in kwargs
+    # with a temporary key, then fixing up. Actually, the simplest approach:
+    # just let the original run, then fix _init_kwargs and the env attribute.
+    _original_env_robosuite_init(self, *args, **kwargs)
+    if camera_depths:
+        # Instead of re-creating the env, just set camera_depths on the
+        # existing robosuite env and re-setup its observables.
+        self._init_kwargs["camera_depths"] = True
+        self.env.camera_depths = self.env._input2list(True, self.env.num_cameras)
+        self.env._observables = self.env._setup_observables()
+        if self._is_v1:
+            for ob_name in self.env.observation_names:
+                if ("joint_pos" in ob_name) or ("eef_vel" in ob_name):
+                    self.env.modify_observable(observable_name=ob_name, attribute="active", modifier=True)
+
+EnvRobosuite.__init__ = _patched_env_robosuite_init
+
+_original_get_observation = EnvRobosuite.get_observation
+
+def _patched_get_observation(self, di=None):
+    # Get the raw obs dict *before* the original filters it, so we can
+    # extract depth keys that would otherwise be dropped.
+    if di is None:
+        di = self.env._get_observations(force_update=True) if self._is_v1 else self.env._get_observation()
+    ret = _original_get_observation(self, di)
+    for k in di:
+        if k.endswith("_depth") and k not in ret:
+            ret[k] = di[k]
+    return ret
+
+EnvRobosuite.get_observation = _patched_get_observation
+
+
 def make_robomimic_env(
 	render=False,
 	use_image_obs=False,

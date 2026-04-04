@@ -4,20 +4,20 @@ hydra:
   run:  
     dir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 
-name: robomimic_square_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+name: robomimic_can_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
 dppo_path: ./dppo
-base_policy_path: ./dppo/log/robomimic-pretrain/square_pre_diffusion_mlp_img_ta4_td100/proficient-human-mv/checkpoint/state_10000.pt
-base_stats_path: ./dppo/log/robomimic-pretrain/square_pre_diffusion_mlp_img_ta4_td100/proficient-human-mv/base_stats.txt
-offline_data_path: ./dppo/data/robomimic/square-ph-img-mv/train.npz
-normalization_path: ./dppo/data/robomimic/square-ph-img-mv/normalization.npz
+base_policy_path: ./dppo/log/robomimic-pretrain/can_pre_diffusion_mlp_img_ta4_td100/multi-human-mv/checkpoint/state_3000.pt
+base_stats_path: ./dppo/log/robomimic-pretrain/can_pre_diffusion_mlp_img_ta4_td100/multi-human-mv/base_stats.txt
+offline_data_path: ./dppo/data/robomimic/can-mh-img-mv/train.npz
+normalization_path: ./dppo/data/robomimic/can-mh-img-mv/normalization.npz
 
 use_wandb: True # Kind of legacy parameter, eventually just remove this and always use wandb.
 resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
 wandb:
   project: fast
-  group: robomimic-square
+  group: robomimic-can
   id: null # if resume is true, this must be provided.
   save_id_local_path: null # relative path to log_dir to save wandb run id - helpful for slurm pre-emption.
 
@@ -25,13 +25,13 @@ algorithm: fast # options are: dsrl_na, dsrl_sac
 
 seed: 1
 device: cuda:0
-env_name: square
+env_name: can
 log_dir: ./logs 
 obs_dim: 9
 action_dim: 7 # this is base action dim!
 cond_steps: 1
 img_cond_steps: 1
-act_steps: 4
+act_steps: 4 # action chunk size of base policy
 load_offline_data: False # if true, load offline demonstration data into replay buffer
 deterministic_eval: True # if true, run eval with both deterministic actions, as well as stochastic
 debug_gradients: False # if true, log gradient norms and values for debugging
@@ -46,6 +46,8 @@ shape_meta:
   obs:
     rgb:
       shape: [6, 96, 96]
+    depth:
+      shape: [2, 96, 96]
     state:
       shape: [9]
   action: 
@@ -55,7 +57,7 @@ env:
   n_envs:  4
   n_eval_envs: 25
   name: ${env_name}
-  max_episode_steps: 400
+  max_episode_steps: 300
   reset_at_iteration: False
   save_video: False
   best_reward_threshold_for_success: 1 
@@ -66,8 +68,9 @@ env:
       normalization_path: ${normalization_path}
       low_dim_keys: ['robot0_eef_pos',
                     'robot0_eef_quat',
-                    'robot0_gripper_qpos']
+                    'robot0_gripper_qpos'] # same order of preprocessed observations
       image_keys: ['agentview_image', 'robot0_eye_in_hand_image']
+      depth_keys: ['agentview_depth', 'robot0_eye_in_hand_depth']
       shape_meta: ${shape_meta}
       impedance_mode: ${policy.impedance_mode} # fixed, variable, variable_kp
       control_obs: ${env.control_obs}
@@ -109,7 +112,7 @@ train:
   discount: 0.95
   ent_coef: -1
   target_ent: 0.0
-  init_rollout_steps: 2001 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
+  init_rollout_steps: 1501 # Number of rollout steps of standard diffusion policy to collect for replay buffer before training starts
   init_rollout_noise_magnitude: 0.1 # Initial noise magnitude for rollout actions
   n_critics: 2 # Number of critic Q networks
   critic_backup_combine_type: min
@@ -141,7 +144,7 @@ model:
     augment: False
     spatial_emb: 128
     time_dim: 32
-    mlp_dims: [768, 768, 768]
+    mlp_dims: [512, 512, 512]
     residual_style: True
     img_cond_steps: ${img_cond_steps}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}

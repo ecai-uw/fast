@@ -117,7 +117,7 @@ def main(cfg: OmegaConf):
         return env
 
     # env = make_env()
-    # obs = env.reset()
+    # obs, _ = env.reset()
     # breakpoint()
 
     env = make_vec_env(make_env, n_envs=num_env, vec_env_cls=SubprocVecEnv)

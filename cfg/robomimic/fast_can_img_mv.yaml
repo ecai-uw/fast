@@ -8,10 +8,10 @@ name: robomimic_can_dsrl_${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 # NOTE: this run_dir is different from hydra's - meant to be persistent across script runs for checkpoint management.
 run_dir: null # This will be manually set during training to allow for simple run resumes.
 dppo_path: ./dppo
-base_policy_path: ./dppo/log/robomimic-pretrain/can_pre_diffusion_mlp_img_ta4_td100/proficient-human-mv/checkpoint/state_5000.pt
-base_stats_path: ./dppo/log/robomimic-finetune/can_ft_diffusion_mlp_img_ta4_td100_tdf5/multi-human-dppo/base_stats.txt
-offline_data_path: ./dppo/data/robomimic/can-ph-img-mv/train.npz
-normalization_path: ./dppo/data/robomimic/can-ph-img-mv/normalization.npz
+base_policy_path: ./dppo/log/robomimic-pretrain/can_pre_diffusion_mlp_img_ta4_td100/multi-human-mv/checkpoint/state_3000.pt
+base_stats_path: ./dppo/log/robomimic-pretrain/can_pre_diffusion_mlp_img_ta4_td100/multi-human-mv/base_stats.txt
+offline_data_path: ./dppo/data/robomimic/can-mh-img-mv/train.npz
+normalization_path: ./dppo/data/robomimic/can-mh-img-mv/normalization.npz
 
 use_wandb: True # Kind of legacy parameter, eventually just remove this and always use wandb.
 resume: False # if true (e.g. slurm pre-emption), resume using given wandb.id
@@ -115,21 +115,6 @@ train:
   critic_backup_combine_type: min
   grad_clip_norm: 1.0 # Gradient clipping norm, or null for no clipping
 
-# base:
-#   tau: 0.005 # Target update rate
-#   lr: 3e-4
-#   fqe_steps: 5000
-#   vd_steps: 5000
-#   vd_samples: 16
-#   # lr_scheduler: cosine # Options: constant, linear, cosine
-#   batch_size: 256
-#   use_layer_norm: ${train.use_layer_norm}
-#   layer_size: ${train.layer_size}
-#   num_layers: ${train.num_layers}
-#   discount: 0.99
-#   n_critics: ${train.n_critics}
-#   critic_backup_combine_type: ${train.critic_backup_combine_type}
-
 model:
   _target_: model.diffusion.diffusion_eval.DiffusionEval
   ft_denoising_steps: 0
@@ -158,6 +143,7 @@ model:
     time_dim: 32
     mlp_dims: [512, 512, 512]
     residual_style: True
+    img_cond_steps: ${img_cond_steps}
     cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
     horizon_steps: ${act_steps}
     action_dim: ${action_dim}
